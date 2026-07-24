@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { TICK, TowerRun, mulberry32 } from './sim/engine.js'
 import { describeComposition, randomTeamGenome } from './sim/brain.js'
-import { analyzeRun, reportToMarkdown } from './sim/report.js'
+import { analyzeRun, compareReports, reportToMarkdown } from './sim/report.js'
 import { AUTOSAVE_EVERY, Evolution, WORKER_COUNT } from './ga/evolution.js'
 import {
   clearSession, downloadJson, exportSession, importSession, loadSession, saveSession,
@@ -396,5 +396,13 @@ window.tour = {
   markdown(gen) {
     const r = this.report(gen)
     return r ? reportToMarkdown(r) : null
+  },
+  // Comparer plusieurs générations d'un coup : « qu'est-ce qui a changé
+  // entre la 20 et la 300 ? », à coller dans un prompt.
+  comparer(generations) {
+    const reports = generations
+      .map((g) => this.report(g))
+      .filter(Boolean)
+    return reports.length ? compareReports(reports) : null
   },
 }

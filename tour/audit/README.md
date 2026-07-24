@@ -6,12 +6,16 @@ ont effectivement échoué, ce qui a fait remonter trois défauts corrigés
 depuis (voir « Ce que l'audit a trouvé »).
 
 ```bash
-node audit/audit.mjs            # suite complète (~6 min)
-node audit/audit.mjs --rapide   # version courte (~1 min)
-node audit/diagnose-ga.mjs      # santé des mutations et de l'héritabilité
-node audit/experiment-seeds.mjs # combien de graines par évaluation ?
+node audit/audit.mjs             # suite complète, 12 tests (~6 min)
+node audit/audit.mjs --rapide    # version courte (~3 min)
+node audit/diagnose-plateau.mjs  # pourquoi la progression plafonne
+node audit/diagnose-ga.mjs       # santé des mutations et de l'héritabilité
+node audit/experiment-seeds.mjs  # combien de graines par évaluation ?
 node audit/cross-check.mjs session.json   # navigateur → Node
 ```
+
+Depuis la racine du dépôt : `npm run audit`, `npm run audit:rapide`,
+`npm run diagnostic`, `npm run verifier <session.json>`.
 
 ## Ce que chaque test cherche à réfuter
 
@@ -60,6 +64,23 @@ les 25 graines de test comme des répétitions. C'est de la pseudo-réplication
 — on mesure la variabilité entre graines, pas entre méthodes, et le test ne
 pouvait structurellement rien détecter. Il relance désormais chaque méthode
 plusieurs fois avec des germes indépendants.
+
+## Diagnostics complémentaires
+
+`diagnose-plateau.mjs` ne teste pas la validité des résultats mais répond à
+une autre question : **pourquoi la progression s'arrête-t-elle ?** Il
+distingue trois causes qui appellent des corrections opposées — un mur
+arithmétique dans les règles, une saturation de la recherche (génome trop
+grand pour la population), ou des leviers tactiques déjà tous exploités.
+Il affiche la courbe de puissance comparée agents/monstres, le rapport
+paramètres/individu, l'usage réel de chaque capacité par un champion
+entraîné, et la répartition des causes de mort sur des graines inédites.
+
+`profile` — pour situer le coût : un run coûte ~21 ms, dont **95 % en
+passes avant des réseaux** (5,7 µs par passe, ~5 500 passes par run) et
+seulement 10 % de ce total en `tanh`/`exp`. La logique de jeu représente
+5 % du temps. Conséquence directe : optimiser le moteur JavaScript ne
+rapporte rien, seul un évaluateur vectorisé (GPU) change l'échelle.
 
 ## Note de méthode
 

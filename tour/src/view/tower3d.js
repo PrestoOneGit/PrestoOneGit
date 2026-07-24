@@ -657,5 +657,3 @@ export class Tower3D {
     }
   }
 }
-
-export { CLASSES }

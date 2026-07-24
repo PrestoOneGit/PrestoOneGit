@@ -20,13 +20,21 @@ self.onmessage = (e) => {
     let floors = 0
     let lastPost = 0
     for (const seed of job.seeds) {
-      const res = runTower(genome, seed, (snap) => {
-        const now = performance.now()
-        if (now - lastPost > 90) {
-          lastPost = now
-          self.postMessage({ type: 'snapshot', workerId, genomeIndex: job.index, snap })
-        }
-      })
+      // `emitEvents: false` : le worker ne lit jamais le flux d'événements
+      // destiné à la vue 3D, autant ne pas le produire.
+      const res = runTower(
+        genome,
+        seed,
+        (snap) => {
+          const now = performance.now()
+          if (now - lastPost > 90) {
+            lastPost = now
+            self.postMessage({ type: 'snapshot', workerId, genomeIndex: job.index, snap })
+          }
+        },
+        40,
+        { emitEvents: false }
+      )
       total += res.fitness
       floors = Math.max(floors, res.floors)
     }

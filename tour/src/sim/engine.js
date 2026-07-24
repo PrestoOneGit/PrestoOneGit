@@ -40,6 +40,36 @@ export function mulberry32(seed) {
 const obs = new Float32Array(INPUT_SIZE)
 const act = new Float32Array(OUTPUT_SIZE)
 
+// Sélection des N monstres les plus proches, sans allocation. Une
+// version précédente faisait `monsters.map(...).sort(...)` à chaque
+// observation, soit ~5 500 tableaux d'objets créés par run rien que pour
+// en lire quatre. Ici deux tableaux réutilisés et une insertion triée.
+const NEAR = 4
+const nearEntity = new Array(NEAR)
+const nearDist = new Float64Array(NEAR)
+
+function selectNearest(monsters, x, z) {
+  for (let i = 0; i < NEAR; i++) {
+    nearEntity[i] = null
+    nearDist[i] = Infinity
+  }
+  for (let i = 0; i < monsters.length; i++) {
+    const m = monsters[i]
+    const dx = m.x - x
+    const dz = m.z - z
+    const d = dx * dx + dz * dz
+    if (d >= nearDist[NEAR - 1]) continue
+    let slot = NEAR - 1
+    while (slot > 0 && nearDist[slot - 1] > d) {
+      nearDist[slot] = nearDist[slot - 1]
+      nearEntity[slot] = nearEntity[slot - 1]
+      slot--
+    }
+    nearDist[slot] = d
+    nearEntity[slot] = m
+  }
+}
+
 function freshAfflictions() {
   return { burn: 0, poison: 0, poisonStacks: 0, slow: 0, stun: 0, vuln: 0 }
 }
@@ -57,13 +87,16 @@ function upgradeMultipliers(counts) {
 }
 
 export class TowerRun {
-  // `logging` active la collecte détaillée pour les rapports. Désactivé
-  // par défaut : les workers d'évaluation ne paient pas ce coût.
-  constructor(genome, seed, { logging = false } = {}) {
+  // `logging` active la collecte détaillée pour les rapports.
+  // `emitEvents` produit le flux d'événements que consomme la vue 3D ;
+  // les workers d'évaluation n'en lisent aucun et le désactivent, ce qui
+  // évite des dizaines de milliers d'objets créés puis jetés par run.
+  constructor(genome, seed, { logging = false, emitEvents = true } = {}) {
     this.genome = genome
     this.seed = seed
     this.rng = mulberry32(seed)
     this.logging = logging
+    this.emitEvents = emitEvents
     this.time = 0
     this.floor = 0
     this.floorTime = 0
@@ -164,6 +197,12 @@ export class TowerRun {
     this.timeline.push({ t: Number(this.time.toFixed(1)), floor: this.floor, type, ...data })
   }
 
+  // Les événements ne servent qu'à la vue 3D. Sans consommateur, on ne
+  // les construit pas : l'objet littéral serait alloué puis jeté.
+  emit(event) {
+    if (this.emitEvents) this.events.push(event)
+  }
+
   // ---- Étages ----
 
   spawnMonster(type, scale, { elite = false, boss = null } = {}) {
@@ -248,7 +287,7 @@ export class TowerRun {
       this.spawnMonster(type, scale, { elite })
       budget -= cost
     }
-    this.events.push({ t: 'floor', floor, boss: isBoss })
+    this.emit({ t: 'floor', floor, boss: isBoss })
     this.mark('floorStart', { boss: isBoss })
   }
 
@@ -285,7 +324,7 @@ export class TowerRun {
       this.currentFloorLog.upgrades.push({ agent: hero.cls.label, slot: hero.slot, upgrade: UPGRADES[best].id })
     }
     this.mark('upgrade', { agent: hero.cls.label, slot: hero.slot, upgrade: UPGRADES[best].id })
-    this.events.push({ t: 'upgrade', slot: hero.slot, upgrade: UPGRADES[best].id })
+    this.emit({ t: 'upgrade', slot: hero.slot, upgrade: UPGRADES[best].id })
   }
 
   clearFloor() {
@@ -321,7 +360,7 @@ export class TowerRun {
 
     if (rest) {
       this.restsLeft--
-      this.events.push({ t: 'rest', restsLeft: this.restsLeft })
+      this.emit({ t: 'rest', restsLeft: this.restsLeft })
       this.mark('rest', { restsLeft: this.restsLeft })
     }
     if (this.currentFloorLog) {
@@ -331,7 +370,7 @@ export class TowerRun {
       this.floorLog.push(this.currentFloorLog)
       this.currentFloorLog = null
     }
-    this.events.push({ t: 'floorClear', floor: this.floor })
+    this.emit({ t: 'floorClear', floor: this.floor })
     this.betweenFloors = 1.2
   }
 
@@ -370,7 +409,7 @@ export class TowerRun {
   damageHero(monster, hero, amount) {
     // Un agent en l'air esquive les attaques de mêlée.
     if (hero.airborne > 0 && monster && monster.stats.range < 3) {
-      this.events.push({ t: 'dodge', at: [hero.x, hero.z] })
+      this.emit({ t: 'dodge', at: [hero.x, hero.z] })
       return
     }
     let dmg = amount
@@ -384,7 +423,7 @@ export class TowerRun {
       hero.hp = 0
       hero.alive = false
       hero.stats.deathFloor = this.floor
-      this.events.push({ t: 'heroDown', slot: hero.slot, at: [hero.x, hero.z] })
+      this.emit({ t: 'heroDown', slot: hero.slot, at: [hero.x, hero.z] })
       if (this.currentFloorLog) {
         this.currentFloorLog.deaths.push({ agent: hero.cls.label, slot: hero.slot })
       }
@@ -418,7 +457,7 @@ export class TowerRun {
           entity.hp = 0
           entity.alive = false
           entity.stats.deathFloor = this.floor
-          this.events.push({ t: 'heroDown', slot: entity.slot, at: [entity.x, entity.z] })
+          this.emit({ t: 'heroDown', slot: entity.slot, at: [entity.x, entity.z] })
           if (this.currentFloorLog) {
             this.currentFloorLog.deaths.push({ agent: entity.cls.label, slot: entity.slot, cause: 'affliction' })
           }
@@ -461,17 +500,15 @@ export class TowerRun {
     // Améliorations accumulées
     for (let i = 0; i < UPGRADES.length; i++) obs[k++] = Math.min(hero.upgrades[i] / 4, 1)
 
-    const sorted = this.monsters
-      .map((m) => ({ m, d: (m.x - hero.x) ** 2 + (m.z - hero.z) ** 2 }))
-      .sort((a, b) => a.d - b.d)
-    for (let i = 0; i < 4; i++) {
-      const e = sorted[i]
-      if (e) {
-        obs[k++] = (e.m.x - hero.x) / R
-        obs[k++] = (e.m.z - hero.z) / R
-        obs[k++] = e.m.hp / e.m.maxHp
-        obs[k++] = Math.min((e.m.dmg / hero.maxHp) * 8, 1)
-        obs[k++] = e.m.boss ? 1 : e.m.elite ? 0.5 : 0
+    selectNearest(this.monsters, hero.x, hero.z)
+    for (let i = 0; i < NEAR; i++) {
+      const m = nearEntity[i]
+      if (m) {
+        obs[k++] = (m.x - hero.x) / R
+        obs[k++] = (m.z - hero.z) / R
+        obs[k++] = m.hp / m.maxHp
+        obs[k++] = Math.min((m.dmg / hero.maxHp) * 8, 1)
+        obs[k++] = m.boss ? 1 : m.elite ? 0.5 : 0
       } else {
         obs[k++] = 0
         obs[k++] = 0
@@ -605,7 +642,7 @@ export class TowerRun {
         }
         hero.jumpTo = [tx, tz]
         hero.stats.jump++
-        this.events.push({ t: 'jump', from: [hero.x, hero.z], to: [tx, tz], slot: hero.slot })
+        this.emit({ t: 'jump', from: [hero.x, hero.z], to: [tx, tz], slot: hero.slot })
         return
       }
       if (out[OUT_MOBILITY] > 0.5 && hero.mobilityCds.dash <= 0) {
@@ -617,13 +654,13 @@ export class TowerRun {
         hero.z += dirZ * d.distance
         this.clampToArena(hero)
         hero.stats.dash++
-        this.events.push({ t: 'dash', from: [fromX, fromZ], to: [hero.x, hero.z], slot: hero.slot })
+        this.emit({ t: 'dash', from: [fromX, fromZ], to: [hero.x, hero.z], slot: hero.slot })
       }
       if (out[OUT_MOBILITY + 1] > 0.5 && hero.mobilityCds.sprint <= 0) {
         hero.mobilityCds.sprint = MOBILITY.sprint.cd
         hero.sprintLeft = MOBILITY.sprint.duration
         hero.stats.sprint++
-        this.events.push({ t: 'sprint', slot: hero.slot })
+        this.emit({ t: 'sprint', slot: hero.slot })
       }
     }
 
@@ -670,7 +707,7 @@ export class TowerRun {
       hero.cdBasic = hero.cls.cooldown * haste
       hero.stats.basic++
       this.damageMonster(hero, target, this.heroOutgoing(hero, hero.cls.dmg))
-      this.events.push({
+      this.emit({
         t: hero.cls.range > 3 ? 'arrow' : 'slash',
         from: [hero.x, hero.z],
         to: [target.x, target.z],
@@ -689,7 +726,7 @@ export class TowerRun {
         this.commit(hero, abIndex, ab, haste)
         this.damageMonster(hero, target, power)
         this.applyAfflictions(target, ab.applies)
-        this.events.push({ t: 'cast', from: [hero.x, hero.z], to: [target.x, target.z], color: hero.cls.color, ability: ab.id })
+        this.emit({ t: 'cast', from: [hero.x, hero.z], to: [target.x, target.z], color: hero.cls.color, ability: ab.id })
         break
       }
       case 'aoe': {
@@ -710,7 +747,7 @@ export class TowerRun {
             this.applyAfflictions(m, ab.applies)
           }
         }
-        this.events.push({ t: 'aoe', at: [cx, cz], r: ab.radius, color: hero.cls.color, seal: true, ability: ab.id })
+        this.emit({ t: 'aoe', at: [cx, cz], r: ab.radius, color: hero.cls.color, seal: true, ability: ab.id })
         break
       }
       case 'heal': {
@@ -720,7 +757,7 @@ export class TowerRun {
         const amount = Math.min(power, target.maxHp - target.hp)
         target.hp += amount
         hero.healing += amount
-        this.events.push({ t: 'heal', to: [target.x, target.z], ability: ab.id })
+        this.emit({ t: 'heal', to: [target.x, target.z], ability: ab.id })
         break
       }
       case 'aoeheal': {
@@ -735,7 +772,7 @@ export class TowerRun {
           h.hp += amount
           hero.healing += amount
         }
-        this.events.push({ t: 'aoe', at: [hero.x, hero.z], r: ab.radius, color: '#8fe89a', seal: true, ability: ab.id })
+        this.emit({ t: 'aoe', at: [hero.x, hero.z], r: ab.radius, color: '#8fe89a', seal: true, ability: ab.id })
         break
       }
       case 'buff': {
@@ -743,7 +780,7 @@ export class TowerRun {
         this.commit(hero, abIndex, ab, haste)
         if (ab.buff === 'bless') target.bless = BLESS_DURATION
         else if (ab.buff === 'stance') target.stance = STANCE_DURATION
-        this.events.push({ t: 'buff', to: [target.x, target.z], color: hero.cls.color, ability: ab.id })
+        this.emit({ t: 'buff', to: [target.x, target.z], color: hero.cls.color, ability: ab.id })
         break
       }
       case 'taunt': {
@@ -756,7 +793,7 @@ export class TowerRun {
         }
         if (taunted === 0) return
         this.commit(hero, abIndex, ab, haste)
-        this.events.push({ t: 'taunt', at: [hero.x, hero.z], r: ab.range, ability: ab.id })
+        this.emit({ t: 'taunt', at: [hero.x, hero.z], r: ab.range, ability: ab.id })
         break
       }
       case 'drain': {
@@ -767,7 +804,7 @@ export class TowerRun {
         const heal = Math.min(power * 0.8, hero.maxHp - hero.hp)
         hero.hp += heal
         hero.healing += heal
-        this.events.push({ t: 'drain', from: [target.x, target.z], to: [hero.x, hero.z], ability: ab.id })
+        this.emit({ t: 'drain', from: [target.x, target.z], to: [hero.x, hero.z], ability: ab.id })
         break
       }
     }
@@ -802,7 +839,7 @@ export class TowerRun {
             if (m.bossApplies) this.applyAfflictions(h, m.bossApplies)
           }
         }
-        this.events.push({ t: 'slam', at: [m.x, m.z], r: m.slam.radius })
+        this.emit({ t: 'slam', at: [m.x, m.z], r: m.slam.radius })
         return
       }
     }
@@ -821,7 +858,7 @@ export class TowerRun {
       if (target) {
         m.cd = m.stats.cooldown
         target.hp = Math.min(target.maxHp, target.hp + m.stats.heal * Math.pow(MONSTER_GROWTH, this.floor - 1))
-        this.events.push({ t: 'heal', to: [target.x, target.z] })
+        this.emit({ t: 'heal', to: [target.x, target.z] })
         return
       }
     }
@@ -864,11 +901,11 @@ export class TowerRun {
             this.applyAfflictions(h, m.stats.applies)
           }
         }
-        this.events.push({ t: 'aoe', at: [target.x, target.z], r: m.stats.aoe, color: '#d1584a' })
+        this.emit({ t: 'aoe', at: [target.x, target.z], r: m.stats.aoe, color: '#d1584a' })
       } else {
         this.damageHero(m, target, m.dmg)
         this.applyAfflictions(target, m.stats.applies)
-        this.events.push({ t: 'bite', to: [target.x, target.z] })
+        this.emit({ t: 'bite', to: [target.x, target.z] })
       }
     }
   }
@@ -900,7 +937,7 @@ export class TowerRun {
       const m = this.monsters[i]
       if (m.hp <= 0) {
         this.monstersKilled++
-        this.events.push({ t: 'monsterDie', at: [m.x, m.z], size: m.size })
+        this.emit({ t: 'monsterDie', at: [m.x, m.z], size: m.size })
         this.monsters.splice(i, 1)
       }
     }

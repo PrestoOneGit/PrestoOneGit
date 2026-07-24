@@ -1,4 +1,4 @@
-// Cerveau d'un agent : MLP 65 → 28 → 18. Aucun comportement écrit à la
+// Cerveau d’un agent : MLP 66 → 28 → 18. Aucun comportement écrit à la
 // main — le réseau décide du déplacement, de la mobilité (dash, course,
 // bond), de l'action (attaque de base ou l'une des 3 capacités), du
 // ciblage, de l'envie de repos et du CHOIX d'amélioration au niveau.
@@ -14,7 +14,7 @@ export const INPUT_SIZE = 66
 export const HIDDEN = 28
 
 // Disposition des sorties :
-//  0-1  déplacement (x, z)
+//  0-1  déplacement (x, z) — lus directement, sans constante
 //  2    porte d'action (agir ou non)
 //  3    attaque de base
 //  4-6  capacités 1..3
@@ -22,7 +22,6 @@ export const HIDDEN = 28
 //  8    envie de repos
 //  9-11 mobilité : dash, course, bond
 //  12-17 préférence pour chacune des 6 améliorations
-export const OUT_MOVE = 0
 export const OUT_GATE = 2
 export const OUT_BASIC = 3
 export const OUT_ABILITY = 4

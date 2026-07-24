@@ -10,12 +10,23 @@ l'évolution l'a découvert.
 
 ## Lancer
 
+Depuis la racine du dépôt (voir [`DEMARRAGE.md`](../DEMARRAGE.md) pour
+l'installation complète) :
+
 ```bash
-cd tour
-npm install
-npm run dev            # Chrome/Chromium recommandé
-npm run build:single   # produit dist-single/index.html, autonome
+npm run tour     # Chrome recommandé → http://localhost:5173
+npm run build    # fichier autonome dans tour/dist-single/index.html
+npm run audit    # la suite de vérification (12 tests)
 ```
+
+Ou depuis ce dossier : `npm run dev`, `npm run build:single`.
+
+## Coût de calcul
+
+Un run complet coûte **~21 ms** en JavaScript, dont **95 % en passes avant
+des réseaux** (mesuré par `audit/` — voir la note de profilage plus bas).
+La logique de jeu ne pèse que 5 % : micro-optimiser le moteur ne mènerait
+nulle part, et c'est précisément pourquoi le portage GPU est le bon levier.
 
 ## Le jeu (data-driven : `src/sim/data.js`)
 
@@ -85,7 +96,13 @@ Le bouton **Rapport** rejoue le run affiché en mode journalisé et produit :
 
 « Copier pour un LLM » met un résumé markdown compact dans le presse-papier,
 « Exporter JSON » télécharge le rapport complet. Depuis la console :
-`tour.report(130)` et `tour.markdown(130)`.
+
+```js
+tour.report(130)                  // rapport structuré d'une génération
+tour.markdown(130)                // le même, en markdown à coller
+tour.comparer([20, 130, 300])     // ce qui a changé entre plusieurs générations
+tour.playGeneration(130)          // rejouer ce champion dans la vue 3D
+```
 
 ## Ce qu'on observe (mesuré)
 
@@ -154,6 +171,35 @@ généralisation à des graines jamais vues, supériorité sur une recherche
 aléatoire à budget égal, contrôle négatif sans sélection, et reproduction
 exacte dans un processus Node indépendant des fitness annoncées par
 l'interface.
+
+## Le plafond actuel, et pourquoi
+
+`node audit/diagnose-plateau.mjs` mesure les trois causes possibles d'un
+plafonnement. Verdict au moment où ces lignes sont écrites :
+
+**Le plafond est arithmétique, pas cognitif.** Les monstres gagnent 5,5 %
+de puissance par étage contre 3,5 % pour les agents, et leur nombre croît
+en plus linéairement. Le total de PV d'un étage passe de 0,2× celui de
+l'équipe au 1ᵉʳ étage à 1,3× au 15ᵉ et 3,6× au 30ᵉ. Aucune stratégie, même
+parfaite, ne franchit ce mur : sur 12 graines inédites, un champion meurt
+aux étages 8 à 10, toujours par **mort** et jamais par enlisement.
+
+Deux constats qui écartent les autres explications :
+
+- **Les leviers tactiques sont déjà saturés.** Les capacités représentent
+  49 % des actions, aucune n'est laissée de côté, et la mobilité est
+  massivement utilisée (10 à 20 dashes, 9 à 14 bonds par agent et par run).
+  Les agents jouent déjà tout ce que les règles offrent.
+- **Le génome est surdimensionné pour la population** : 11 995 paramètres
+  pour 32 individus, soit 375 paramètres par individu évalué. Un
+  algorithme génétique explore correctement quelques centaines de
+  paramètres à cette taille de population — c'est un frein secondaire,
+  réel mais moins décisif que le mur.
+
+La suite logique est donc d'**élargir le jeu** (courbes de progression
+rééquilibrées, plus de terrain, plus de choix tactiques) plutôt que de
+pousser l'algorithme. Deux améliorations sur six ne sont d'ailleurs jamais
+choisies (Vigueur et Célérité) : signe qu'elles sont mal calibrées.
 
 ## Prochaine étape : la phase GPU
 
