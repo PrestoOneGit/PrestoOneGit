@@ -4,7 +4,7 @@ import { CLASSES } from '../sim/data.js'
 // HUD : mur de mini-tours (une par worker), courbe de l'étage record,
 // équipe en rejeu (classes, vie, mana, stats) et journal d'ascension.
 export class HUD {
-  constructor({ workerCount, onPauseToggle, onReset, onReplaySpeed, onSelectRecord }) {
+  constructor({ workerCount, onPauseToggle, onReset, onReplaySpeed, onSelectRecord, onQualityToggle }) {
     this.genInfo = document.getElementById('gen-info')
     this.replayInfo = document.getElementById('replay-info')
     this.teamGen = document.getElementById('team-gen')
@@ -19,9 +19,10 @@ export class HUD {
     this.rowsFor = null
 
     this.pauseBtn = document.getElementById('pause-evo')
+    this.pauseBtn.title = 'Met l’évolution en pause (le rejeu continue)'
     this.pauseBtn.addEventListener('click', () => {
       const paused = onPauseToggle()
-      this.pauseBtn.textContent = paused ? 'Reprendre l’évolution' : 'Suspendre l’évolution'
+      this.pauseBtn.textContent = paused ? 'Reprendre' : 'Suspendre'
     })
     document.getElementById('reset').addEventListener('click', onReset)
 
@@ -33,6 +34,12 @@ export class HUD {
         onReplaySpeed(Number(btn.dataset.rspeed))
       })
     }
+
+    this.qualityBtn = document.getElementById('quality')
+    this.qualityBtn.title = 'Niveau de détail du rejeu — sans effet sur la vitesse d’apprentissage'
+    this.qualityBtn.addEventListener('click', () => {
+      this.qualityBtn.textContent = onQualityToggle()
+    })
 
     this.cells = []
     const grid = document.getElementById('workers-grid')

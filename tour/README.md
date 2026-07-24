@@ -57,10 +57,29 @@ npm run build:single   # produit dist-single/index.html, autonome
 
 ## Visionneuse
 
-Rejeu 3D du meilleur run (capsules, barres PV/mana, anneaux d'AoE, provocation,
-frappes de boss), ambiance du plateau qui change avec les paliers, mur des
-ascensions parallèles (une par worker), courbe de l'étage record, rejeux
-cliquables des 20 derniers records, contrôles pause/x1/x2/x4.
+Rejeu 3D du meilleur run (barres PV/mana, anneaux d'AoE, provocation, frappes
+de boss), ambiance du plateau qui change avec les paliers, mur des ascensions
+parallèles (une par worker), courbe de l'étage record, rejeux cliquables des
+40 derniers records, contrôles pause/x1/x2/x4.
+
+### Niveaux de détail (bouton Capsules / Pions / Deluxe)
+
+Comme un réglage graphique de jeu : on remplace les modèles et les effets
+du rejeu, sans toucher au reste.
+
+| Niveau | Modèles | Ombres | Effets |
+|---|---|---|---|
+| **Capsules** | capsules colorées | non | projectiles et zones |
+| **Pions** (défaut) | pièces tournées façon jeu d'échecs, emblème par classe (couronne, cornes, arc, chapeau, auréole, orbe) | oui | idem |
+| **Deluxe** | pions + matériaux plus riches | oui | + fentes à l'attaque, flashs d'impact, pop des cibles touchées |
+
+**Le rendu ne ralentit pas l'apprentissage.** L'évolution tourne dans les Web
+Workers (autres cœurs CPU), le rendu sur le fil principal + GPU, et sur les
+milliers de runs simulés **un seul est rendu** : celui du rejeu. Mesuré en
+navigateur (3 cœurs, rendu logiciel — le pire des cas) : 0,87 gén/s en
+Capsules, 0,92 en Pions, 0,95 en Deluxe — l'écart est du bruit. Le sélecteur
+sert donc au confort (vieille machine, session en arrière-plan), pas à
+protéger le calcul.
 
 ## Prochaine étape : la phase GPU
 

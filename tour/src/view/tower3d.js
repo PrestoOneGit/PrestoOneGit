@@ -5,18 +5,66 @@ import { CLASSES, tierForFloor } from '../sim/data.js'
 const STONE = '#8a8276'
 const STONE_DARK = '#6e675c'
 
-// Vue 3D minimale : des capsules colorées sur le plateau d'un étage de la
-// tour. L'ambiance (couleur du sol, brouillard) change avec les paliers.
+// Niveaux de qualité — purement visuels. Le rendu se fait sur le fil
+// principal + GPU, l'évolution dans les Web Workers : changer de qualité
+// ne change RIEN à la vitesse d'apprentissage. Et sur les milliers de
+// runs simulés, un seul est rendu (le rejeu).
+export const QUALITY_LEVELS = [
+  { id: 'capsules', label: 'Capsules', shadows: false, lathe: false, emblems: false, hitFx: false },
+  { id: 'pions', label: 'Pions', shadows: true, lathe: true, emblems: true, hitFx: false },
+  { id: 'deluxe', label: 'Deluxe', shadows: true, lathe: true, emblems: true, hitFx: true },
+]
+
+// Profil tourné d'une pièce de jeu (socle, fût, collerette, tête).
+// LatheGeometry le fait pivoter autour de Y : x = rayon, y = hauteur.
+const PION_PROFILE = [
+  [0.0, 0.0], [0.4, 0.0], [0.42, 0.06], [0.34, 0.12], [0.26, 0.18],
+  [0.17, 0.3], [0.15, 0.52], [0.23, 0.62], [0.24, 0.68], [0.15, 0.74],
+  [0.24, 0.86], [0.27, 0.98], [0.2, 1.1], [0.0, 1.18],
+]
+
+// Les monstres sont des pions plus trapus et plus larges d'épaules.
+const MONSTER_PROFILE = [
+  [0.0, 0.0], [0.46, 0.0], [0.48, 0.08], [0.36, 0.16], [0.28, 0.26],
+  [0.34, 0.44], [0.41, 0.6], [0.35, 0.74], [0.2, 0.86], [0.0, 0.94],
+]
+
+function latheGeometry(profile, segments) {
+  return new THREE.LatheGeometry(
+    profile.map(([x, y]) => new THREE.Vector2(x, y)),
+    segments
+  )
+}
+
+// Vue 3D de l'étage courant. Les entités sont reconstruites à chaque
+// changement de qualité — comme un réglage graphique de jeu vidéo.
 export class Tower3D {
-  constructor(scene) {
+  constructor(scene, quality = 'pions') {
     this.scene = scene
     this.group = new THREE.Group()
     this.heroMeshes = []
     this.monsterMeshes = new Map()
     this.vfx = []
     this.run = null
+    this.quality = QUALITY_LEVELS.find((q) => q.id === quality) ?? QUALITY_LEVELS[1]
+    this.geoCache = new Map()
     scene.add(this.group)
     this.buildStage()
+  }
+
+  geo(key, build) {
+    if (!this.geoCache.has(key)) this.geoCache.set(key, build())
+    return this.geoCache.get(key)
+  }
+
+  setQuality(id) {
+    const level = QUALITY_LEVELS.find((q) => q.id === id)
+    if (!level || level === this.quality) return
+    this.quality = level
+    // Les géométries dépendent du niveau : on repart d'un cache propre.
+    for (const g of this.geoCache.values()) g.dispose()
+    this.geoCache.clear()
+    if (this.run) this.attach(this.run)
   }
 
   buildStage() {
@@ -39,7 +87,6 @@ export class Tower3D {
     ring.position.y = 0.02
     this.group.add(ring)
 
-    // Muraille basse en blocs
     const segs = 22
     for (let i = 0; i < segs; i++) {
       const a = (i / segs) * Math.PI * 2
@@ -53,7 +100,6 @@ export class Tower3D {
       this.group.add(block)
     }
 
-    // Braseros
     this.flames = []
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * Math.PI * 2 + Math.PI / 4
@@ -86,47 +132,159 @@ export class Tower3D {
     return bar
   }
 
+  // Emblème posé sur la tête du pion : signature visuelle de la classe.
+  makeEmblem(classId, mat) {
+    const metal = new THREE.MeshStandardMaterial({
+      color: '#d8d2c4', flatShading: true, roughness: 0.45, metalness: 0.2,
+    })
+    const g = new THREE.Group()
+    switch (classId) {
+      case 'chevalier': {
+        // Couronne crénelée
+        const ring = new THREE.Mesh(this.geo('crown', () => new THREE.CylinderGeometry(0.19, 0.21, 0.1, 8)), metal)
+        ring.position.y = 1.22
+        g.add(ring)
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2
+          const spike = new THREE.Mesh(this.geo('crownSpike', () => new THREE.ConeGeometry(0.05, 0.14, 4)), metal)
+          spike.position.set(Math.cos(a) * 0.16, 1.33, Math.sin(a) * 0.16)
+          g.add(spike)
+        }
+        break
+      }
+      case 'berserker': {
+        // Deux cornes
+        for (const side of [-1, 1]) {
+          const horn = new THREE.Mesh(this.geo('horn', () => new THREE.ConeGeometry(0.07, 0.32, 5)), metal)
+          horn.position.set(side * 0.15, 1.3, 0)
+          horn.rotation.z = side * 0.5
+          g.add(horn)
+        }
+        break
+      }
+      case 'archere': {
+        // Arc dressé
+        const bow = new THREE.Mesh(
+          this.geo('bow', () => new THREE.TorusGeometry(0.22, 0.035, 4, 12, Math.PI * 1.2)),
+          new THREE.MeshStandardMaterial({ color: '#8a5a3b', flatShading: true, roughness: 1 })
+        )
+        bow.position.y = 1.32
+        bow.rotation.y = Math.PI / 2
+        bow.rotation.z = -0.3
+        g.add(bow)
+        break
+      }
+      case 'mage': {
+        // Chapeau pointu
+        const hat = new THREE.Mesh(this.geo('hat', () => new THREE.ConeGeometry(0.24, 0.46, 7)), mat)
+        hat.position.y = 1.38
+        g.add(hat)
+        break
+      }
+      case 'clerc': {
+        // Auréole
+        const halo = new THREE.Mesh(
+          this.geo('halo', () => new THREE.TorusGeometry(0.2, 0.035, 4, 14)),
+          new THREE.MeshStandardMaterial({ color: '#ffe9a3', emissive: '#e8c96a', emissiveIntensity: 0.9, flatShading: true })
+        )
+        halo.rotation.x = Math.PI / 2
+        halo.position.y = 1.34
+        g.add(halo)
+        break
+      }
+      case 'occultiste': {
+        // Orbe flottante
+        const orb = new THREE.Mesh(
+          this.geo('orb', () => new THREE.IcosahedronGeometry(0.13, 0)),
+          new THREE.MeshStandardMaterial({ color: '#b78fe0', emissive: '#7a5f9e', emissiveIntensity: 1.1, flatShading: true })
+        )
+        orb.position.y = 1.36
+        g.add(orb)
+        g.userData.floating = orb
+        break
+      }
+    }
+    return g
+  }
+
   makeHeroMesh(hero) {
     const color = new THREE.Color(hero.cls.color)
+    const q = this.quality
     const mat = new THREE.MeshStandardMaterial({
       color,
       flatShading: true,
-      roughness: 0.75,
+      roughness: q.lathe ? 0.55 : 0.75,
+      metalness: q.lathe ? 0.15 : 0,
       emissive: color,
-      emissiveIntensity: 0.12,
+      emissiveIntensity: q.id === 'deluxe' ? 0.18 : 0.12,
     })
     const g = new THREE.Group()
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.75, 3, 8), mat)
-    body.position.y = 0.72
-    body.castShadow = true
+
+    let body
+    if (q.lathe) {
+      body = new THREE.Mesh(this.geo('pion', () => latheGeometry(PION_PROFILE, 12)), mat)
+      // Socle sombre : le pion se détache du sol
+      const base = new THREE.Mesh(
+        this.geo('pionBase', () => new THREE.CylinderGeometry(0.44, 0.5, 0.07, 12)),
+        new THREE.MeshStandardMaterial({ color: '#3a332c', flatShading: true, roughness: 0.9 })
+      )
+      base.position.y = 0.035
+      g.add(base)
+    } else {
+      body = new THREE.Mesh(this.geo('capsule', () => new THREE.CapsuleGeometry(0.34, 0.75, 3, 8)), mat)
+      body.position.y = 0.72
+    }
+    body.castShadow = q.shadows
     g.add(body)
-    const hpBar = this.makeBar(0.9, 1.78, '#57c46a')
-    const manaBar = this.makeBar(0.9, 1.62, '#5d93d4')
+
+    let emblem = null
+    if (q.emblems) {
+      emblem = this.makeEmblem(hero.cls.id, mat)
+      g.add(emblem)
+    }
+
+    const hpBar = this.makeBar(0.9, q.lathe ? 1.85 : 1.78, '#57c46a')
+    const manaBar = this.makeBar(0.9, q.lathe ? 1.69 : 1.62, '#5d93d4')
     g.add(hpBar, manaBar)
-    g.userData = { hpBar, manaBar, mat }
+    g.userData = { hpBar, manaBar, mat, body, emblem, baseColor: color.clone(), lunge: 0, lungeDir: [0, 0], flash: 0 }
     return g
   }
 
   makeMonsterMesh(m) {
+    const q = this.quality
     const color = m.boss ? '#7a3c3c' : m.elite ? '#8f6e3c' : '#6e8557'
-    const mat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9 })
+    const mat = new THREE.MeshStandardMaterial({
+      color, flatShading: true, roughness: 0.9, metalness: q.lathe ? 0.1 : 0,
+    })
     const g = new THREE.Group()
     const s = m.size
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3 * (0.9 + s), 0.4 * (0.7 + s), 3, 7), mat)
-    body.position.y = 0.55 * (0.7 + s)
-    body.castShadow = true
+
+    let body
+    if (q.lathe) {
+      body = new THREE.Mesh(this.geo('mpion', () => latheGeometry(MONSTER_PROFILE, 9)), mat)
+      body.scale.setScalar(0.85 + s * 0.55)
+    } else {
+      body = new THREE.Mesh(
+        this.geo(`mcap${s.toFixed(2)}`, () => new THREE.CapsuleGeometry(0.3 * (0.9 + s), 0.4 * (0.7 + s), 3, 7)),
+        mat
+      )
+      body.position.y = 0.55 * (0.7 + s)
+    }
+    body.castShadow = q.shadows
     g.add(body)
+
     if (m.boss || m.elite) {
       const crown = new THREE.Mesh(
-        new THREE.ConeGeometry(0.16, 0.3, 5),
+        this.geo('mcrown', () => new THREE.ConeGeometry(0.16, 0.3, 5)),
         new THREE.MeshStandardMaterial({ color: '#e8c96a', emissive: '#a8873c', flatShading: true })
       )
-      crown.position.y = 1.2 * s + 0.75
+      crown.position.y = (q.lathe ? 0.95 : 1.2) * s + 0.75
       g.add(crown)
     }
-    const hpBar = this.makeBar(0.8 * (0.7 + s * 0.5), 1.2 * s + 0.95, '#d1584a')
+
+    const hpBar = this.makeBar(0.8 * (0.7 + s * 0.5), (q.lathe ? 1.05 : 1.2) * s + 0.95, '#d1584a')
     g.add(hpBar)
-    g.userData = { hpBar }
+    g.userData = { hpBar, mat, body, baseColor: new THREE.Color(color), lunge: 0, lungeDir: [0, 0], flash: 0 }
     return g
   }
 
@@ -145,9 +303,113 @@ export class Tower3D {
     }
   }
 
+  // ---- Réactions aux coups (qualité Deluxe) ----
+  // Le moteur reste intact : on retrouve les entités touchées par leur
+  // position dans les événements, côté vue uniquement.
+
+  nearestMesh(list, x, z, maxDist = 1.4) {
+    let best = null
+    let bestD = maxDist * maxDist
+    for (const { mesh, ex, ez } of list) {
+      const d = (ex - x) ** 2 + (ez - z) ** 2
+      if (d < bestD) {
+        bestD = d
+        best = mesh
+      }
+    }
+    return best
+  }
+
+  entityIndex() {
+    const heroes = this.run.heroes
+      .map((h, i) => ({ mesh: this.heroMeshes[i], ex: h.x, ez: h.z }))
+      .filter((e) => e.mesh)
+    const monsters = []
+    for (const m of this.run.monsters) {
+      const mesh = this.monsterMeshes.get(m.id)
+      if (mesh) monsters.push({ mesh, ex: m.x, ez: m.z })
+    }
+    return { heroes, monsters }
+  }
+
+  reactToHits() {
+    if (!this.quality.hitFx) return
+    const { heroes, monsters } = this.entityIndex()
+
+    const lunge = (mesh, from, to) => {
+      if (!mesh) return
+      const dx = to[0] - from[0]
+      const dz = to[1] - from[1]
+      const d = Math.hypot(dx, dz) || 1
+      mesh.userData.lunge = 1
+      mesh.userData.lungeDir = [dx / d, dz / d]
+    }
+    const flash = (mesh) => {
+      if (mesh) mesh.userData.flash = 1
+    }
+
+    for (const ev of this.run.events) {
+      switch (ev.t) {
+        case 'slash':
+        case 'arrow':
+        case 'cast':
+          if (ev.from) lunge(this.nearestMesh(heroes, ev.from[0], ev.from[1]), ev.from, ev.to)
+          flash(this.nearestMesh(monsters, ev.to[0], ev.to[1]))
+          break
+        case 'drain':
+          flash(this.nearestMesh(monsters, ev.from[0], ev.from[1]))
+          break
+        case 'bite':
+          flash(this.nearestMesh(heroes, ev.to[0], ev.to[1]))
+          break
+        case 'slam':
+          for (const e of heroes) {
+            if (Math.hypot(e.ex - ev.at[0], e.ez - ev.at[1]) <= ev.r) flash(e.mesh)
+          }
+          break
+        case 'aoe': {
+          // Zone rouge = attaque de monstre sur les héros ; zone verte =
+          // soin (pas de flash) ; sinon zone de héros sur les monstres.
+          if (ev.color === '#8fe89a') break
+          const targets = ev.color === '#d1584a' ? heroes : monsters
+          for (const e of targets) {
+            if (Math.hypot(e.ex - ev.at[0], e.ez - ev.at[1]) <= ev.r) flash(e.mesh)
+          }
+          break
+        }
+      }
+    }
+  }
+
+  animateReaction(mesh, dt) {
+    const u = mesh.userData
+    if (!this.quality.hitFx) return [0, 0]
+    let offX = 0
+    let offZ = 0
+    if (u.lunge > 0) {
+      u.lunge = Math.max(0, u.lunge - dt * 5)
+      // Aller-retour : pic à mi-parcours
+      const p = Math.sin(u.lunge * Math.PI)
+      offX = u.lungeDir[0] * p * 0.35
+      offZ = u.lungeDir[1] * p * 0.35
+    }
+    if (u.flash > 0) {
+      u.flash = Math.max(0, u.flash - dt * 4.5)
+      u.mat.emissive.copy(u.baseColor).lerp(new THREE.Color('#ffffff'), u.flash * 0.9)
+      u.mat.emissiveIntensity = 0.18 + u.flash * 1.4
+      if (u.body) u.body.scale.setScalar((u.bodyScale ?? 1) * (1 + u.flash * 0.12))
+    } else if (u.mat.emissiveIntensity !== 0.18) {
+      u.mat.emissive.copy(u.baseColor)
+      u.mat.emissiveIntensity = 0.18
+      if (u.body) u.body.scale.setScalar(u.bodyScale ?? 1)
+    }
+    return [offX, offZ]
+  }
+
   spawnVfx(kind, from, to, { radius = 1, color = '#fff4dd' } = {}) {
     let mesh
     let life = 0.3
+    const seg = this.quality.id === 'capsules' ? 12 : 20
     if (kind === 'arrow') {
       mesh = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.5, 4), new THREE.MeshBasicMaterial({ color: '#e8dcc0' }))
       life = 0.2
@@ -156,7 +418,7 @@ export class Tower3D {
       life = 0.22
     } else if (kind === 'aoe' || kind === 'taunt' || kind === 'slam') {
       mesh = new THREE.Mesh(
-        new THREE.TorusGeometry(0.4, 0.07, 4, 20),
+        new THREE.TorusGeometry(0.4, 0.07, 4, seg),
         new THREE.MeshBasicMaterial({
           color: kind === 'taunt' ? '#e8c96a' : kind === 'slam' ? '#d1584a' : color,
           transparent: true,
@@ -184,51 +446,32 @@ export class Tower3D {
       )
       life = 0.15
     }
-    mesh.position.set(from[0], kind === 'aoe' || kind === 'taunt' || kind === 'slam' ? 0.12 : 0.9, from[1])
+    const grounded = kind === 'aoe' || kind === 'taunt' || kind === 'slam'
+    mesh.position.set(from[0], grounded ? 0.12 : 0.9, from[1])
     this.group.add(mesh)
     this.vfx.push({ mesh, kind, life, maxLife: life, from, to, radius })
   }
 
   update(dt, elapsed, camera) {
     if (!this.run) return
+    const q = this.quality
 
-    // Ambiance du palier : le sol se teinte avec la profondeur
     const tier = tierForFloor(Math.max(this.run.floor, 1))
     this.floorMat.color.lerp(new THREE.Color(tier.ambiance), 0.03)
 
-    this.run.heroes.forEach((hero, i) => {
-      const mesh = this.heroMeshes[i]
-      mesh.position.set(hero.x, 0, hero.z)
-      const { hpBar, manaBar, mat } = mesh.userData
-      const frac = Math.max(hero.hp / hero.maxHp, 0)
-      hpBar.scale.x = Math.max(frac, 0.001)
-      hpBar.material.color.set(frac > 0.5 ? '#57c46a' : frac > 0.25 ? '#e8b93c' : '#d1584a')
-      manaBar.scale.x = Math.max(hero.mana / hero.maxMana, 0.001)
-      hpBar.lookAt(camera.position)
-      manaBar.lookAt(camera.position)
-      if (!hero.alive) {
-        mesh.rotation.z = Math.min(mesh.rotation.z + dt * 4, Math.PI / 2)
-        mat.transparent = true
-        mat.opacity = 0.5
-      } else {
-        mesh.rotation.z = 0
-        mat.opacity = 1
-        mesh.position.y = Math.abs(Math.sin(elapsed * 8 + i)) * 0.06
-        // Étourdi : la capsule vacille
-        if (hero.aff.stun > 0) mesh.rotation.z = Math.sin(elapsed * 30) * 0.15
-      }
-    })
-
+    // Les monstres d'abord : reactToHits a besoin de leurs meshes.
     const seen = new Set()
     for (const m of this.run.monsters) {
       seen.add(m.id)
       let mesh = this.monsterMeshes.get(m.id)
       if (!mesh) {
         mesh = this.makeMonsterMesh(m)
+        mesh.userData.bodyScale = mesh.userData.body.scale.x
         this.monsterMeshes.set(m.id, mesh)
         this.group.add(mesh)
       }
-      mesh.position.set(m.x, Math.abs(Math.sin(elapsed * 7 + m.id)) * 0.07, m.z)
+      const [ox, oz] = this.animateReaction(mesh, dt)
+      mesh.position.set(m.x + ox, Math.abs(Math.sin(elapsed * 7 + m.id)) * 0.07, m.z + oz)
       mesh.userData.hpBar.scale.x = Math.max(m.hp / m.maxHp, 0.001)
       mesh.userData.hpBar.lookAt(camera.position)
       const target = this.run.heroes.find((h) => h.alive)
@@ -240,6 +483,49 @@ export class Tower3D {
         this.monsterMeshes.delete(id)
       }
     }
+
+    this.reactToHits()
+
+    this.run.heroes.forEach((hero, i) => {
+      const mesh = this.heroMeshes[i]
+      const [ox, oz] = this.animateReaction(mesh, dt)
+      mesh.position.set(hero.x + ox, 0, hero.z + oz)
+      const { hpBar, manaBar, mat, emblem } = mesh.userData
+      const frac = Math.max(hero.hp / hero.maxHp, 0)
+      hpBar.scale.x = Math.max(frac, 0.001)
+      hpBar.material.color.set(frac > 0.5 ? '#57c46a' : frac > 0.25 ? '#e8b93c' : '#d1584a')
+      manaBar.scale.x = Math.max(hero.mana / hero.maxMana, 0.001)
+      hpBar.lookAt(camera.position)
+      manaBar.lookAt(camera.position)
+      if (emblem?.userData.floating) {
+        emblem.userData.floating.position.y = 1.36 + Math.sin(elapsed * 2 + i) * 0.06
+        emblem.userData.floating.rotation.y += dt * 1.5
+      }
+      if (!hero.alive) {
+        mesh.rotation.z = Math.min(mesh.rotation.z + dt * 4, Math.PI / 2)
+        mat.transparent = true
+        mat.opacity = 0.5
+      } else {
+        mesh.rotation.z = hero.aff.stun > 0 ? Math.sin(elapsed * 30) * 0.15 : 0
+        mat.opacity = 1
+        mesh.position.y = Math.abs(Math.sin(elapsed * 8 + i)) * (q.lathe ? 0.04 : 0.06)
+        // Le pion s'oriente vers le monstre le plus proche
+        if (q.lathe && this.run.monsters.length > 0) {
+          let bx = 0
+          let bz = 0
+          let bd = Infinity
+          for (const m of this.run.monsters) {
+            const d = (m.x - hero.x) ** 2 + (m.z - hero.z) ** 2
+            if (d < bd) {
+              bd = d
+              bx = m.x
+              bz = m.z
+            }
+          }
+          mesh.rotation.y = Math.atan2(bx - hero.x, bz - hero.z)
+        }
+      }
+    })
 
     for (const ev of this.run.events) {
       if (ev.t === 'arrow') this.spawnVfx('arrow', ev.from, ev.to)

@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { TICK, TowerRun, mulberry32 } from './sim/engine.js'
 import { describeComposition, randomTeamGenome } from './sim/brain.js'
 import { Evolution, WORKER_COUNT } from './ga/evolution.js'
-import { Tower3D } from './view/tower3d.js'
+import { QUALITY_LEVELS, Tower3D } from './view/tower3d.js'
 import { HUD } from './ui/hud.js'
 
 // ---- Scène ----
@@ -46,7 +46,8 @@ sunlight.shadow.camera.far = 110
 sunlight.shadow.bias = -0.0004
 scene.add(sunlight)
 
-const tower = new Tower3D(scene)
+const tower = new Tower3D(scene, 'pions')
+let qualityIndex = QUALITY_LEVELS.findIndex((q) => q.id === 'pions')
 
 // ---- Rejeu : records, contrôles ----
 
@@ -119,7 +120,7 @@ function createEvolution() {
         floors: best.floors,
       }
       records.unshift(record)
-      if (records.length > 20) records.pop()
+      if (records.length > 40) records.pop()
       hud?.renderRecords(records, replayMeta?.id)
       // On ne vole pas le run en cours — sauf pour remplacer l'équipe
       // aléatoire de démarrage.
@@ -145,6 +146,7 @@ hud = new HUD({
     pendingRecord = null
     pinned = false
     hud.addLog('Nouveau départ : population réinitialisée, la tour attend de nouveaux prétendants.')
+    // (le bouton qualité garde son réglage : c'est un préréglage d'affichage)
     hud.resetControls()
     hud.renderRecords(records, null)
     startReplay(bootstrap)
@@ -152,6 +154,14 @@ hud = new HUD({
   },
   onReplaySpeed: (s) => {
     replaySpeed = s
+  },
+  onQualityToggle: () => {
+    // Réglage purement visuel : l'évolution tourne dans les workers,
+    // elle n'est pas affectée.
+    qualityIndex = (qualityIndex + 1) % QUALITY_LEVELS.length
+    const level = QUALITY_LEVELS[qualityIndex]
+    tower.setQuality(level.id)
+    return level.label
   },
   onSelectRecord: (record) => {
     pinned = true
@@ -227,6 +237,16 @@ animate()
 window.tour = {
   get evolution() {
     return evolution
+  },
+  get quality() {
+    return tower.quality.id
+  },
+  setQuality(id) {
+    const i = QUALITY_LEVELS.findIndex((q) => q.id === id)
+    if (i < 0) return
+    qualityIndex = i
+    tower.setQuality(id)
+    document.getElementById('quality').textContent = QUALITY_LEVELS[i].label
   },
   get replay() {
     return replayRun
