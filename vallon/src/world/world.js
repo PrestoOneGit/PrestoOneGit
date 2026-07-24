@@ -282,7 +282,7 @@ export class World {
       const cloud = new THREE.Mesh(mergeGeometries(parts), mat)
       cloud.position.set(
         (this.rng() - 0.5) * WORLD_SIZE * 1.3,
-        26 + this.rng() * 10,
+        38 + this.rng() * 14,
         (this.rng() - 0.5) * WORLD_SIZE * 1.3
       )
       cloud.userData.speed = 0.4 + this.rng() * 0.5

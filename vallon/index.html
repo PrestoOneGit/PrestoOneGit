@@ -24,7 +24,7 @@
         <div class="hud-controls">
           <div class="hud-pop">
             <span class="hud-pop-count" id="pop-count">0</span>
-            <span class="hud-pop-label">habitants</span>
+            <span class="hud-pop-label" id="pop-label">âmes</span>
           </div>
           <div class="hud-speed" role="group" aria-label="Vitesse de la simulation">
             <button data-speed="0" aria-label="Pause">II</button>
@@ -32,11 +32,33 @@
             <button data-speed="3">x3</button>
             <button data-speed="8">x8</button>
           </div>
+          <button id="advance-years" class="hud-btn hud-btn-secondary">+10 ans</button>
+          <button id="toggle-chronicle" class="hud-btn hud-btn-secondary">Chronique</button>
           <button id="new-world" class="hud-btn">Nouveau monde</button>
         </div>
       </header>
 
-      <p class="hud-hint" id="hint">Cliquez sur une créature pour la suivre — molette pour zoomer, glisser pour tourner</p>
+      <aside class="chronicle" id="chronicle" hidden>
+        <div class="chronicle-head">
+          <h2>Chronique du Vallon</h2>
+          <button id="chronicle-close" aria-label="Fermer la chronique">&times;</button>
+        </div>
+        <ol class="chronicle-list" id="chronicle-list"></ol>
+      </aside>
+
+      <aside class="creature-panel" id="village-panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="v-name">—</h2>
+            <p id="v-meta">—</p>
+          </div>
+          <button id="village-close" aria-label="Fermer le panneau">&times;</button>
+        </div>
+        <p class="c-state" id="v-house">—</p>
+        <ul class="village-events" id="v-events"></ul>
+      </aside>
+
+      <p class="hud-hint" id="hint">Cliquez sur un village ou une créature — molette pour zoomer, glisser pour tourner</p>
 
       <aside class="creature-panel" id="creature-panel" hidden>
         <div class="panel-head">
@@ -64,9 +86,7 @@
       </aside>
 
       <footer class="hud-stats">
-        <span id="stat-births">0 naissances</span>
-        <span class="stat-sep"></span>
-        <span id="stat-deaths">0 disparitions</span>
+        <span id="ticker">La chronique s’ouvre…</span>
       </footer>
     </div>
     <script type="module" src="/src/main.js"></script>

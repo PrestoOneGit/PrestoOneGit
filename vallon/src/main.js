@@ -1,8 +1,12 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { World } from './world/world.js'
+import { Villages } from './world/villages.js'
 import { Simulation } from './sim/simulation.js'
+import { HistoryEngine } from './history/history.js'
 import { HUD } from './ui/hud.js'
+
+const GENESIS_YEARS = 400
 
 const SKY = {
   day: new THREE.Color('#c9e6ef'),
@@ -55,13 +59,21 @@ scene.add(moon)
 
 let world = null
 let sim = null
-let selected = null
+let history = null
+let villages = null
+let selected = null // créature sauvage suivie
+let selectedSite = null // village sélectionné
+let hud = null
 let seed = Math.floor(Math.random() * 2 ** 31)
 
 function buildWorld(newSeed) {
   if (sim) {
     scene.remove(sim.group)
     sim.dispose()
+  }
+  if (villages) {
+    scene.remove(villages.group)
+    villages.dispose()
   }
   if (world) {
     scene.remove(world.group)
@@ -70,14 +82,19 @@ function buildWorld(newSeed) {
   seed = newSeed
   world = new World(seed)
   sim = new Simulation(world, seed)
+  history = new HistoryEngine(world, seed).genesis(GENESIS_YEARS)
+  villages = new Villages(world, history, seed)
   scene.add(world.group)
   scene.add(sim.group)
+  scene.add(villages.group)
   selected = null
+  selectedSite = null
+  if (hud) hud.resetChronicle()
 }
 
 buildWorld(seed)
 
-const hud = new HUD({
+hud = new HUD({
   onSpeedChange: (s) => {
     sim.speed = s
   },
@@ -88,6 +105,11 @@ const hud = new HUD({
   },
   onClosePanel: () => {
     selected = null
+    selectedSite = null
+  },
+  onAdvanceYears: () => {
+    for (let i = 0; i < 10; i++) history.tickYear()
+    villages.rebuildAll()
   },
 })
 
@@ -108,9 +130,21 @@ canvas.addEventListener('pointerup', (e) => {
   pointer.x = (e.clientX / window.innerWidth) * 2 - 1
   pointer.y = -(e.clientY / window.innerHeight) * 2 + 1
   raycaster.setFromCamera(pointer, camera)
-  const hits = raycaster.intersectObjects(sim.group.children, true)
-  const hit = hits.find((h) => h.object.userData.creature && !h.object.userData.creature.isDead)
-  selected = hit ? hit.object.userData.creature : null
+  const hits = raycaster.intersectObjects([sim.group, villages.group], true)
+  const creatureHit = hits.find(
+    (h) => h.object.userData.creature && !h.object.userData.creature.isDead
+  )
+  const siteHit = hits.find((h) => h.object.userData.site)
+  if (creatureHit) {
+    selected = creatureHit.object.userData.creature
+    selectedSite = null
+  } else if (siteHit) {
+    selectedSite = siteHit.object.userData.site
+    selected = null
+  } else {
+    selected = null
+    selectedSite = null
+  }
 })
 
 function resize() {
@@ -158,6 +192,7 @@ function animate() {
   sim.update(rawDt)
   const nightFactor = updateAtmosphere()
   world.update(rawDt * Math.max(sim.speed, 1), elapsed, nightFactor)
+  villages.update(Math.min(rawDt, 0.1) * sim.speed, elapsed, sim.isNight)
 
   if (selected) {
     if (selected.isDead && selected.deathTimer <= 0) {
@@ -175,7 +210,7 @@ function animate() {
   }
 
   controls.update()
-  hud.update(sim, selected)
+  hud.update(sim, history, selected, selectedSite)
   renderer.render(scene, camera)
 }
 
@@ -186,7 +221,16 @@ window.vallon = {
   get sim() {
     return sim
   },
+  get history() {
+    return history
+  },
+  get villages() {
+    return villages
+  },
   suivre(i = 0) {
     selected = sim.creatures[i] ?? null
+  },
+  village(i = 0) {
+    selectedSite = history.sites[i] ?? null
   },
 }
