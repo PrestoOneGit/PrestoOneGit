@@ -79,55 +79,29 @@ export class Arena3D {
     }
   }
 
+  // Formes volontairement minimales : des capsules colorées. La lisibilité
+  // vient des couleurs, des barres de vie et des effets — pas des modèles.
   makeHeroMesh(hero) {
     const color = new THREE.Color(hero.cls.color)
-    const mat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.85 })
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      flatShading: true,
+      roughness: 0.75,
+      emissive: color,
+      emissiveIntensity: 0.12,
+    })
     const g = new THREE.Group()
-
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.38, 1.0, 6), mat)
-    body.position.y = 0.5
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.75, 3, 8), mat)
+    body.position.y = 0.72
     body.castShadow = true
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.24, 6, 5),
-      new THREE.MeshStandardMaterial({ color: '#dbb896', flatShading: true, roughness: 0.9 })
-    )
-    head.position.y = 1.22
-    g.add(body, head)
-
-    // Signature visuelle par classe
-    if (hero.cls.id === 'guerrier') {
-      const sword = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.0, 0.16), new THREE.MeshStandardMaterial({ color: '#c9c9c9', flatShading: true, roughness: 0.4 }))
-      sword.position.set(0.42, 0.85, 0)
-      const shield = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 6), mat)
-      shield.rotation.z = Math.PI / 2
-      shield.position.set(-0.42, 0.7, 0)
-      g.add(sword, shield)
-    } else if (hero.cls.id === 'archere') {
-      const bow = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.04, 4, 10, Math.PI), new THREE.MeshStandardMaterial({ color: '#8a5a3b', flatShading: true, roughness: 1 }))
-      bow.position.set(0.4, 0.85, 0)
-      bow.rotation.y = Math.PI / 2
-      g.add(bow)
-    } else if (hero.cls.id === 'mage') {
-      const hat = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.6, 6), mat)
-      hat.position.y = 1.55
-      const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5, 5), new THREE.MeshStandardMaterial({ color: '#8a5a3b', flatShading: true, roughness: 1 }))
-      staff.position.set(0.42, 0.8, 0)
-      const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.12, 0), new THREE.MeshStandardMaterial({ color: '#7fd4ff', emissive: '#3c9ed4', emissiveIntensity: 1.2, flatShading: true }))
-      orb.position.set(0.42, 1.62, 0)
-      g.add(hat, staff, orb)
-    } else {
-      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.04, 4, 10), new THREE.MeshStandardMaterial({ color: '#ffe9a3', emissive: '#e8c96a', emissiveIntensity: 0.9, flatShading: true }))
-      halo.rotation.x = Math.PI / 2
-      halo.position.y = 1.62
-      g.add(halo)
-    }
+    g.add(body)
 
     // Barre de vie
     const bar = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 0.09, 0.09),
       new THREE.MeshBasicMaterial({ color: '#57c46a' })
     )
-    bar.position.y = 1.95
+    bar.position.y = 1.75
     g.add(bar)
     g.userData.bar = bar
     g.userData.mat = mat
@@ -135,36 +109,19 @@ export class Arena3D {
   }
 
   makeMonsterMesh(m) {
-    const isBig = m.stats.size > 0.8
     const color = m.type === 'troll' ? '#5a7a4a' : m.type === 'brute' ? '#8f5a4a' : '#6e9e50'
     const mat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9 })
     const g = new THREE.Group()
     const s = m.stats.size
-    const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55 * (0.8 + s * 0.5), 0), mat)
-    body.position.y = 0.5 * s + 0.25
-    body.scale.y = 1.15
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3 * (0.9 + s), 0.4 * (0.7 + s), 3, 7), mat)
+    body.position.y = 0.55 * (0.7 + s)
     body.castShadow = true
-    const eyeMat = new THREE.MeshBasicMaterial({ color: '#ffd23c' })
-    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.07 * (1 + s * 0.4), 5, 5), eyeMat)
-    eyeL.position.set(0.16 * (1 + s), 0.62 * s + 0.3, 0.3 * (1 + s * 0.4))
-    const eyeR = eyeL.clone()
-    eyeR.position.x *= -1
-    g.add(body, eyeL, eyeR)
-    if (isBig) {
-      const hornMat = new THREE.MeshStandardMaterial({ color: '#e8dcc0', flatShading: true, roughness: 0.7 })
-      const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.4, 4), hornMat)
-      hornL.position.set(0.3, 0.95 * s + 0.4, 0)
-      hornL.rotation.z = -0.4
-      const hornR = hornL.clone()
-      hornR.position.x *= -1
-      hornR.rotation.z = 0.4
-      g.add(hornL, hornR)
-    }
+    g.add(body)
     const bar = new THREE.Mesh(
       new THREE.BoxGeometry(0.8 * (0.7 + s * 0.5), 0.07, 0.07),
       new THREE.MeshBasicMaterial({ color: '#d1584a' })
     )
-    bar.position.y = 1.2 * s + 0.7
+    bar.position.y = 1.2 * s + 0.9
     g.add(bar)
     g.userData.bar = bar
     return g
@@ -186,7 +143,7 @@ export class Arena3D {
     }
   }
 
-  spawnVfx(kind, from, to) {
+  spawnVfx(kind, from, to, radius = 1) {
     let mesh
     let life = 0.35
     if (kind === 'arrow') {
@@ -201,6 +158,13 @@ export class Arena3D {
         new THREE.MeshBasicMaterial({ color: '#7fd4ff' })
       )
       life = 0.25
+    } else if (kind === 'aoe') {
+      mesh = new THREE.Mesh(
+        new THREE.TorusGeometry(0.4, 0.07, 4, 20),
+        new THREE.MeshBasicMaterial({ color: '#7fd4ff', transparent: true })
+      )
+      mesh.rotation.x = -Math.PI / 2
+      life = 0.45
     } else if (kind === 'heal') {
       mesh = new THREE.Mesh(
         new THREE.TorusGeometry(0.3, 0.05, 4, 12),
@@ -222,9 +186,9 @@ export class Arena3D {
       )
       life = 0.16
     }
-    mesh.position.set(from[0], 0.9, from[1])
+    mesh.position.set(from[0], kind === 'aoe' ? 0.12 : 0.9, from[1])
     this.group.add(mesh)
-    this.vfx.push({ mesh, kind, life, maxLife: life, from, to })
+    this.vfx.push({ mesh, kind, life, maxLife: life, from, to, radius })
   }
 
   update(dt, elapsed, camera) {
@@ -276,6 +240,7 @@ export class Arena3D {
     // Événements du tick → effets
     for (const ev of this.sim.events) {
       if (ev.t === 'arrow' || ev.t === 'bolt') this.spawnVfx(ev.t, ev.from, ev.to)
+      else if (ev.t === 'aoe') this.spawnVfx('aoe', ev.at, ev.at, ev.r)
       else if (ev.t === 'heal') this.spawnVfx('heal', ev.to, ev.to)
       else if (ev.t === 'monsterDie') this.spawnVfx('die', ev.at, ev.at)
       else if (ev.t === 'slash' || ev.t === 'bite') this.spawnVfx(ev.t, ev.to, ev.to)
@@ -296,6 +261,10 @@ export class Arena3D {
           v.mesh.lookAt(v.to[0], 0.9, v.to[1])
           v.mesh.rotateX(Math.PI / 2)
         }
+      } else if (v.kind === 'aoe') {
+        const s = 0.4 + p * v.radius * 2.2
+        v.mesh.scale.set(s, s, 1)
+        v.mesh.material.opacity = 0.9 * (1 - p)
       } else if (v.kind === 'heal') {
         v.mesh.position.y = 0.2 + p * 1.4
         v.mesh.material.opacity = 1 - p

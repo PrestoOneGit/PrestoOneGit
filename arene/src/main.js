@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { GENES, GENES_PER_HERO, HERO_CLASSES, Sim, TICK, mulberry32, randomGenome } from './sim/engine.js'
+import { Sim, TICK, mulberry32, randomTeamGenome } from './sim/engine.js'
 import { Evolution } from './ga/evolution.js'
 import { Arena3D } from './view/arena3d.js'
 import { HUD } from './ui/hud.js'
@@ -60,7 +60,7 @@ function startReplay(genome, seed, meta) {
 }
 
 // Le premier rejeu montre une équipe aléatoire, le temps que l'évolution démarre.
-startReplay(randomGenome(mulberry32(42)), 1, { generation: 0, fitness: 0 })
+startReplay(randomTeamGenome(mulberry32(42)), 1, { generation: 0, fitness: 0 })
 
 // ---- Évolution ----
 
@@ -71,28 +71,8 @@ function describeImprovement(best, previous) {
   if (!previous) {
     return `Gén. ${best.generation} — première équipe de référence (fitness ${Math.round(best.fitness)}, vague ${best.waves}).`
   }
-  // Le gène qui a le plus bougé par rapport au record précédent
-  let bestDelta = 0
-  let heroIdx = 0
-  let geneIdx = 0
-  for (let h = 0; h < HERO_CLASSES.length; h++) {
-    for (let i = 0; i < GENES_PER_HERO; i++) {
-      const spec = GENES[i]
-      const idx = h * GENES_PER_HERO + i
-      const delta = Math.abs(best.genome[idx] - previous.genome[idx]) / (spec.max - spec.min)
-      if (delta > bestDelta) {
-        bestDelta = delta
-        heroIdx = h
-        geneIdx = i
-      }
-    }
-  }
-  const cls = HERO_CLASSES[heroIdx]
-  const spec = GENES[geneIdx]
-  const idx = heroIdx * GENES_PER_HERO + geneIdx
-  const from = previous.genome[idx].toFixed(1)
-  const to = best.genome[idx].toFixed(1)
-  return `Gén. ${best.generation} — record ${Math.round(best.fitness)} (vague ${best.waves}). ${cls.label} : « ${spec.label} » ${from} → ${to}.`
+  const gain = (((best.fitness - previous.fitness) / previous.fitness) * 100).toFixed(1)
+  return `Gén. ${best.generation} — nouveau record ${Math.round(best.fitness)} (vague ${best.waves}, +${gain} %). Les cerveaux s’affinent.`
 }
 
 function createEvolution() {
@@ -104,7 +84,6 @@ function createEvolution() {
     },
     onNewBest: (best, previous) => {
       hud.addLog(describeImprovement(best, previous))
-      hud.showGenome(best.genome, best.generation)
       // Le rejeu bascule sur la nouvelle meilleure équipe
       startReplay(best.genome, best.seed, { generation: best.generation, fitness: best.fitness })
     },
@@ -171,6 +150,7 @@ function animate() {
     hud.setReplayInfo(
       `équipe gén. ${replayMeta.generation} — vague ${replaySim.wave}, ${alive}/4 debout`
     )
+    hud.updateTeamStats(replaySim, replayMeta.generation)
   }
 
   arena.update(dt, elapsed, camera)

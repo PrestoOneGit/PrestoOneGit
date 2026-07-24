@@ -1,13 +1,13 @@
-import { GENES, GENES_PER_HERO, GENOME_SIZE, HERO_CLASSES, mulberry32, randomGenome } from '../sim/engine.js'
+import { mulberry32 } from '../sim/engine.js'
+import { crossoverTeams, mutateTeam, randomTeamGenome } from '../sim/brain.js'
 
-// Algorithme génétique : une population d'équipes, évaluée en parallèle
-// dans un pool de Web Workers, puis sélection, croisement, mutation.
+// Neuro-évolution : une population d'équipes dont chaque héros est un
+// réseau de neurones. Évaluation en parallèle dans un pool de Web Workers,
+// puis sélection, croisement par cerveaux entiers, mutations gaussiennes.
 
-const POP_SIZE = 32
-const ELITES = 3
+const POP_SIZE = 48
+const ELITES = 4
 const FRESH = 2
-const MUTATION_RATE = 0.25
-const MUTATION_SIGMA = 0.14
 const SEEDS_PER_EVAL = 3
 
 export class Evolution {
@@ -18,13 +18,13 @@ export class Evolution {
     this.onNewBest = onNewBest
 
     this.generation = 0
-    this.population = Array.from({ length: POP_SIZE }, () => randomGenome(this.rng))
+    this.population = Array.from({ length: POP_SIZE }, () => randomTeamGenome(this.rng))
     this.history = [] // {gen, best, mean}
     this.bestEver = null // {genome, fitness, generation, seed, waves}
     this.running = false
     this.paused = false
 
-    const n = Math.min(8, Math.max(2, (navigator.hardwareConcurrency || 4) - 1))
+    const n = Math.min(11, Math.max(2, (navigator.hardwareConcurrency || 4) - 1))
     this.workers = Array.from({ length: n }, (_, i) => {
       const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
       w.postMessage({ type: 'init', workerId: i })
@@ -56,7 +56,7 @@ export class Evolution {
   evaluate() {
     return new Promise((resolve) => {
       this.pendingResults = new Map()
-      const seeds = this.seedsForGeneration(this.generation)
+      const seeds = this.seedsForGeneration()
       this.checkGenerationDone = () => {
         if (this.pendingResults.size >= this.population.length) {
           this.checkGenerationDone = null
@@ -87,35 +87,6 @@ export class Evolution {
     return best.genome
   }
 
-  crossover(a, b) {
-    // Croisement par blocs : chaque héros hérite de tous les gènes d'un
-    // même parent, pour préserver les stratégies cohérentes.
-    const child = new Float32Array(GENOME_SIZE)
-    for (let h = 0; h < HERO_CLASSES.length; h++) {
-      const src = this.rng() < 0.5 ? a : b
-      for (let i = 0; i < GENES_PER_HERO; i++) {
-        child[h * GENES_PER_HERO + i] = src[h * GENES_PER_HERO + i]
-      }
-    }
-    return child
-  }
-
-  mutate(genome) {
-    for (let h = 0; h < HERO_CLASSES.length; h++) {
-      for (let i = 0; i < GENES_PER_HERO; i++) {
-        if (this.rng() < MUTATION_RATE) {
-          const spec = GENES[i]
-          const span = spec.max - spec.min
-          // Approximation gaussienne (somme de 3 uniformes)
-          const gauss = (this.rng() + this.rng() + this.rng()) / 1.5 - 1
-          const idx = h * GENES_PER_HERO + i
-          genome[idx] = Math.min(spec.max, Math.max(spec.min, genome[idx] + gauss * span * MUTATION_SIGMA))
-        }
-      }
-    }
-    return genome
-  }
-
   async runGeneration() {
     const results = await this.evaluate()
     const scored = this.population.map((genome, i) => ({
@@ -136,7 +107,7 @@ export class Evolution {
         fitness: best.fitness,
         waves: best.waves,
         generation: this.generation,
-        seed: this.seedsForGeneration(this.generation)[0],
+        seed: this.seedsForGeneration()[0],
       }
       this.onNewBest?.(this.bestEver, previous)
     }
@@ -145,10 +116,10 @@ export class Evolution {
     // Nouvelle population : élites intactes + enfants + sang neuf
     const next = []
     for (let i = 0; i < ELITES; i++) next.push(scored[i].genome.slice())
-    for (let i = 0; i < FRESH; i++) next.push(randomGenome(this.rng))
+    for (let i = 0; i < FRESH; i++) next.push(randomTeamGenome(this.rng))
     while (next.length < POP_SIZE) {
-      const child = this.crossover(this.tournament(scored), this.tournament(scored))
-      next.push(this.mutate(child))
+      const child = crossoverTeams(this.rng, this.tournament(scored), this.tournament(scored))
+      next.push(mutateTeam(this.rng, child))
     }
     this.population = next
     this.generation++

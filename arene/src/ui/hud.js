@@ -1,7 +1,7 @@
-import { ARENA_RADIUS, GENES, GENES_PER_HERO, HERO_CLASSES } from '../sim/engine.js'
+import { ARENA_RADIUS, HERO_CLASSES } from '../sim/engine.js'
 
-// HUD : mur de mini-arènes (une par worker), courbe de fitness, gènes de la
-// meilleure équipe et journal d'apprentissage.
+// HUD : mur de mini-arènes (une par worker), courbe de fitness, état de
+// l'équipe rejouée et journal d'apprentissage.
 export class HUD {
   constructor({ workerCount, onPauseToggle, onReset }) {
     this.genInfo = document.getElementById('gen-info')
@@ -40,7 +40,7 @@ export class HUD {
   }
 
   buildTeamPanel() {
-    this.geneFills = []
+    this.heroRows = []
     this.teamGrid.innerHTML = ''
     HERO_CLASSES.forEach((cls) => {
       const block = document.createElement('div')
@@ -49,39 +49,45 @@ export class HUD {
       const dot = document.createElement('span')
       dot.className = 'hero-dot'
       dot.style.background = cls.color
-      title.append(dot, document.createTextNode(cls.label))
+      const state = document.createElement('em')
+      state.className = 'hero-state'
+      title.append(dot, document.createTextNode(cls.label), state)
       block.appendChild(title)
-      const fills = []
-      GENES.forEach((gene) => {
-        const row = document.createElement('div')
-        row.className = 'gene-row'
-        const label = document.createElement('span')
-        label.textContent = gene.label
-        const bar = document.createElement('div')
-        bar.className = 'gene-bar'
-        const fill = document.createElement('div')
-        fill.className = 'gene-fill'
-        fill.style.background = cls.color
-        bar.appendChild(fill)
-        row.append(label, bar)
-        block.appendChild(row)
-        fills.push(fill)
-      })
+
+      const hpRow = document.createElement('div')
+      hpRow.className = 'gene-row'
+      const hpLabel = document.createElement('span')
+      hpLabel.textContent = 'Vie'
+      const hpBar = document.createElement('div')
+      hpBar.className = 'gene-bar'
+      const hpFill = document.createElement('div')
+      hpFill.className = 'gene-fill'
+      hpFill.style.background = cls.color
+      hpBar.appendChild(hpFill)
+      hpRow.append(hpLabel, hpBar)
+      block.appendChild(hpRow)
+
+      const statLine = document.createElement('p')
+      statLine.className = 'hero-stat'
+      statLine.textContent = '—'
+      block.appendChild(statLine)
+
       this.teamGrid.appendChild(block)
-      this.geneFills.push(fills)
+      this.heroRows.push({ state, hpFill, statLine })
     })
   }
 
-  showGenome(genome, generation) {
+  updateTeamStats(sim, generation) {
     this.teamGen.textContent = `gén. ${generation}`
-    for (let h = 0; h < HERO_CLASSES.length; h++) {
-      for (let i = 0; i < GENES_PER_HERO; i++) {
-        const spec = GENES[i]
-        const v = genome[h * GENES_PER_HERO + i]
-        const frac = (v - spec.min) / (spec.max - spec.min)
-        this.geneFills[h][i].style.width = `${(frac * 100).toFixed(1)}%`
-      }
-    }
+    sim.heroes.forEach((h, i) => {
+      const row = this.heroRows[i]
+      row.state.textContent = h.alive ? '' : ' — à terre'
+      row.hpFill.style.width = `${((h.hp / h.maxHp) * 100).toFixed(0)}%`
+      row.statLine.textContent =
+        h.cls.id === 'soigneuse'
+          ? `${Math.round(h.healing)} PV soignés`
+          : `${Math.round(h.damage)} dégâts infligés`
+    })
   }
 
   drawSnapshot(workerId, genomeIndex, snap) {

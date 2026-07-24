@@ -1,6 +1,12 @@
 // Moteur de combat pur : aucune dépendance à three.js, pour tourner aussi
 // bien dans un Web Worker (simulations accélérées) que dans le fil principal
 // (rejeu du meilleur match). Déterministe à graine et génome égaux.
+//
+// Les héros n'ont AUCUN comportement écrit à la main : chacun est piloté
+// par son réseau de neurones (voir brain.js). Le moteur se contente des
+// règles du jeu : portées, dégâts, vagues, monstres.
+
+import { INPUT_SIZE, forward, randomTeamGenome } from './brain.js'
 
 export const ARENA_RADIUS = 16
 export const MATCH_MAX_TIME = 100
@@ -17,47 +23,23 @@ export function mulberry32(seed) {
   }
 }
 
-// Les « gènes » de comportement, communs à toutes les classes mais appris
-// séparément par chaque héros. C'est ce que l'évolution fait varier.
-export const GENES = [
-  { key: 'portee', label: 'Distance préférée', min: 1.2, max: 11 },
-  { key: 'prudence', label: 'Prudence (repli)', min: 0, max: 0.6 },
-  { key: 'focus', label: 'Focus cibles faibles', min: 0, max: 1 },
-  { key: 'esquive', label: 'Esquive / kiting', min: 0, max: 1 },
-  { key: 'entraide', label: 'Entraide', min: 0, max: 1 },
-  { key: 'agressivite', label: 'Agressivité', min: 0.2, max: 1 },
-]
-export const GENES_PER_HERO = GENES.length
+export { randomTeamGenome }
 
 export const HERO_CLASSES = [
   { id: 'guerrier', label: 'Guerrier', hp: 240, dmg: 17, range: 1.9, cooldown: 1.0, speed: 4.4, color: '#b0553a' },
   { id: 'archere', label: 'Archère', hp: 110, dmg: 12, range: 9.5, cooldown: 0.8, speed: 4.8, color: '#7a9e64' },
-  { id: 'mage', label: 'Mage', hp: 90, dmg: 24, range: 7.5, cooldown: 2.4, speed: 4.0, aoe: 2.5, color: '#5d93b4' },
+  { id: 'mage', label: 'Mage', hp: 90, dmg: 24, range: 7.5, cooldown: 2.4, speed: 4.0, aoe: 2.6, color: '#5d93b4' },
   { id: 'soigneuse', label: 'Soigneuse', hp: 105, heal: 16, range: 7, cooldown: 1.1, speed: 4.4, color: '#c9a96e' },
 ]
-export const GENOME_SIZE = HERO_CLASSES.length * GENES_PER_HERO
-
-export function randomGenome(rng) {
-  const g = new Float32Array(GENOME_SIZE)
-  for (let h = 0; h < HERO_CLASSES.length; h++) {
-    for (let i = 0; i < GENES_PER_HERO; i++) {
-      const spec = GENES[i]
-      g[h * GENES_PER_HERO + i] = spec.min + rng() * (spec.max - spec.min)
-    }
-  }
-  return g
-}
-
-export function geneValue(genome, heroIndex, geneKey) {
-  const i = GENES.findIndex((g) => g.key === geneKey)
-  return genome[heroIndex * GENES_PER_HERO + i]
-}
 
 const MONSTER_TYPES = {
   gobelin: { hp: 38, dmg: 7, speed: 3.9, range: 1.2, cooldown: 0.9, size: 0.5 },
   brute: { hp: 130, dmg: 15, speed: 2.6, range: 1.6, cooldown: 1.4, size: 0.9 },
   troll: { hp: 420, dmg: 24, speed: 2.2, range: 2.0, cooldown: 1.8, size: 1.35 },
 }
+
+const obs = new Float32Array(INPUT_SIZE)
+const act = new Float32Array(4)
 
 export class Sim {
   constructor(genome, seed) {
@@ -66,11 +48,11 @@ export class Sim {
     this.time = 0
     this.wave = 0
     this.waveDelay = 0.8
+    this.waveTimer = 0
     this.events = []
     this.stats = { damage: 0, healing: 0, waves: 0 }
     this.monsters = []
     this.nextMonsterId = 1
-    this.waveTimer = 0
 
     this.heroes = HERO_CLASSES.map((cls, i) => {
       const a = (i / HERO_CLASSES.length) * Math.PI * 2
@@ -83,9 +65,9 @@ export class Sim {
         maxHp: cls.hp,
         cd: 0,
         alive: true,
-        genes: Object.fromEntries(
-          GENES.map((g, gi) => [g.key, genome[i * GENES_PER_HERO + gi]])
-        ),
+        damage: 0,
+        healing: 0,
+        survivedUntil: 0,
       }
     })
   }
@@ -137,166 +119,169 @@ export class Sim {
     this.events.push({ t: 'wave', wave: n })
   }
 
-  nearestMonster(x, z) {
-    let best = null
-    let bd = Infinity
-    for (const m of this.monsters) {
-      const d = (m.x - x) ** 2 + (m.z - z) ** 2
-      if (d < bd) {
-        bd = d
-        best = m
+  // ---- Observations : ce que « voit » le réseau d'un héros ----
+
+  buildObservation(hero) {
+    const R = ARENA_RADIUS
+    let k = 0
+    obs[k++] = hero.hp / hero.maxHp
+    obs[k++] = hero.cd <= 0 ? 1 : Math.max(0, 1 - hero.cd / hero.cls.cooldown)
+    obs[k++] = hero.x / R
+    obs[k++] = hero.z / R
+
+    // Les 3 monstres les plus proches (position relative, PV, gabarit)
+    const sorted = this.monsters
+      .map((m) => ({ m, d: (m.x - hero.x) ** 2 + (m.z - hero.z) ** 2 }))
+      .sort((a, b) => a.d - b.d)
+    for (let i = 0; i < 3; i++) {
+      const e = sorted[i]
+      if (e) {
+        obs[k++] = (e.m.x - hero.x) / R
+        obs[k++] = (e.m.z - hero.z) / R
+        obs[k++] = e.m.hp / e.m.maxHp
+        obs[k++] = e.m.stats.size > 1 ? 1 : e.m.stats.size > 0.6 ? 0.5 : 0
+      } else {
+        obs[k++] = 0
+        obs[k++] = 0
+        obs[k++] = 0
+        obs[k++] = 0
       }
     }
-    return best
-  }
 
-  pickTarget(hero) {
-    // Compromis distance / points de vie restants, dosé par le gène « focus ».
-    let best = null
-    let bestScore = Infinity
-    for (const m of this.monsters) {
-      const d = Math.hypot(m.x - hero.x, m.z - hero.z)
-      const score = d * (1 - hero.genes.focus * 0.65) + (m.hp / m.maxHp) * 14 * hero.genes.focus
-      if (score < bestScore) {
-        bestScore = score
-        best = m
-      }
-    }
-    return best
-  }
-
-  weakestAlly(hero) {
-    let best = null
-    let bestFrac = 1.01
+    // L'allié vivant le plus blessé
+    let weak = null
+    let weakFrac = 1.01
+    let cx = 0
+    let cz = 0
+    let count = 0
     for (const h of this.heroes) {
       if (!h.alive || h === hero) continue
+      cx += h.x
+      cz += h.z
+      count++
       const f = h.hp / h.maxHp
-      if (f < bestFrac) {
-        bestFrac = f
-        best = h
+      if (f < weakFrac) {
+        weakFrac = f
+        weak = h
       }
     }
-    return best
+    if (weak) {
+      obs[k++] = (weak.x - hero.x) / R
+      obs[k++] = (weak.z - hero.z) / R
+      obs[k++] = weakFrac
+    } else {
+      obs[k++] = 0
+      obs[k++] = 0
+      obs[k++] = 1
+    }
+
+    // Centre de gravité des alliés vivants
+    if (count > 0) {
+      obs[k++] = (cx / count - hero.x) / R
+      obs[k++] = (cz / count - hero.z) / R
+    } else {
+      obs[k++] = 0
+      obs[k++] = 0
+    }
+
+    obs[k++] = Math.min(this.wave / 10, 1)
+    obs[k++] = Math.min(this.monsters.length / 12, 1)
+    return obs
   }
+
+  // ---- Un pas de simulation pour un héros : le réseau décide ----
 
   stepHero(hero, dt) {
     if (!hero.alive) return
     hero.cd -= dt
-    const g = hero.genes
-    const isHealer = hero.cls.id === 'soigneuse'
-    const hpFrac = hero.hp / hero.maxHp
+    hero.survivedUntil = this.time
 
-    const target = isHealer ? this.weakestAlly(hero) : this.pickTarget(hero)
-    const nearest = this.nearestMonster(hero.x, hero.z)
+    const out = forward(this.genome, hero.id, this.buildObservation(hero), act)
+    const mx = out[0]
+    const mz = out[1]
+    const wantAct = out[2] > 0.5
+    const pref = out[3] // 0 = au plus proche, 1 = au plus faible
 
-    // --- Déplacement : somme de forces pondérées par les gènes ---
-    let vx = 0
-    let vz = 0
-    // La distance préférée n'est PAS bridée par la portée de la classe :
-    // un guerrier qui « préfère » rester loin ne frappera jamais. C'est à
-    // l'évolution de découvrir la bonne distance pour chaque rôle.
-    const desired = g.portee
-
-    if (target) {
-      const dx = target.x - hero.x
-      const dz = target.z - hero.z
-      const d = Math.hypot(dx, dz) || 0.001
-      if (d > desired) {
-        vx += (dx / d) * 1.0
-        vz += (dz / d) * 1.0
-      } else if (d < desired * 0.75) {
-        vx -= (dx / d) * (0.4 + g.esquive)
-        vz -= (dz / d) * (0.4 + g.esquive)
-      }
+    // Déplacement : direction et intensité décidées par le réseau
+    const mag = Math.min(Math.hypot(mx, mz), 1)
+    if (mag > 0.05) {
+      const sp = hero.cls.speed * mag * dt
+      hero.x += (mx / (mag || 1)) * sp * mag
+      hero.z += (mz / (mag || 1)) * sp * mag
     }
 
-    // Kiting : s'écarter du monstre le plus proche s'il colle
-    if (nearest && !isHealer) {
-      const dx = nearest.x - hero.x
-      const dz = nearest.z - hero.z
-      const d = Math.hypot(dx, dz) || 0.001
-      if (d < desired * 0.9) {
-        vx -= (dx / d) * g.esquive * 1.1
-        vz -= (dz / d) * g.esquive * 1.1
-      }
-    }
-
-    // Repli quand les PV passent sous le seuil de prudence
-    if (nearest && hpFrac < g.prudence) {
-      const dx = nearest.x - hero.x
-      const dz = nearest.z - hero.z
-      const d = Math.hypot(dx, dz) || 0.001
-      vx -= (dx / d) * 1.6
-      vz -= (dz / d) * 1.6
-    }
-
-    // Entraide : rester proche de l'allié le plus mal en point
-    const ally = this.weakestAlly(hero)
-    if (ally && !isHealer) {
-      const dx = ally.x - hero.x
-      const dz = ally.z - hero.z
-      const d = Math.hypot(dx, dz)
-      if (d > 4) {
-        vx += (dx / d) * g.entraide * 0.6
-        vz += (dz / d) * g.entraide * 0.6
-      }
-    }
-
-    // Séparation entre héros
-    for (const h of this.heroes) {
-      if (h === hero || !h.alive) continue
-      const dx = hero.x - h.x
-      const dz = hero.z - h.z
-      const d = Math.hypot(dx, dz)
-      if (d < 1.1 && d > 0.001) {
-        vx += (dx / d) * 0.6
-        vz += (dz / d) * 0.6
-      }
-    }
-
-    const len = Math.hypot(vx, vz)
-    if (len > 0.01) {
-      const sp = hero.cls.speed * dt
-      hero.x += (vx / len) * sp
-      hero.z += (vz / len) * sp
-    }
-
-    // Rester dans l'arène
+    // Règle du jeu : on ne sort pas de l'arène, on ne se superpose pas
     const r = Math.hypot(hero.x, hero.z)
     if (r > ARENA_RADIUS - 0.8) {
       hero.x *= (ARENA_RADIUS - 0.8) / r
       hero.z *= (ARENA_RADIUS - 0.8) / r
     }
+    for (const h of this.heroes) {
+      if (h === hero || !h.alive) continue
+      const dx = hero.x - h.x
+      const dz = hero.z - h.z
+      const d = Math.hypot(dx, dz)
+      if (d < 0.9 && d > 0.001) {
+        hero.x += (dx / d) * (0.9 - d) * 0.5
+        hero.z += (dz / d) * (0.9 - d) * 0.5
+      }
+    }
 
-    // --- Action ---
-    if (!target || hero.cd > 0) return
-    const dist = Math.hypot(target.x - hero.x, target.z - hero.z)
-    if (dist > hero.cls.range) return
-    // Un héros en repli n'attaque que s'il est assez agressif
-    if (hpFrac < g.prudence && this.rng() > g.agressivite) return
-
-    hero.cd = hero.cls.cooldown
+    // Action : choisir une cible À PORTÉE selon la préférence du réseau
+    if (!wantAct || hero.cd > 0) return
+    const isHealer = hero.cls.id === 'soigneuse'
+    let best = null
+    let bestScore = Infinity
     if (isHealer) {
-      const amount = Math.min(hero.cls.heal, target.maxHp - target.hp)
-      if (amount <= 0.5) return
-      target.hp += amount
-      this.stats.healing += amount
-      this.events.push({ t: 'heal', from: [hero.x, hero.z], to: [target.x, target.z], targetId: target.id })
-    } else if (hero.cls.aoe) {
-      for (const m of this.monsters) {
-        if (Math.hypot(m.x - target.x, m.z - target.z) <= hero.cls.aoe) {
-          m.hp -= hero.cls.dmg
-          this.stats.damage += hero.cls.dmg
+      for (const h of this.heroes) {
+        if (!h.alive || h === hero) continue
+        const d = Math.hypot(h.x - hero.x, h.z - hero.z)
+        if (d > hero.cls.range || h.hp >= h.maxHp - 0.5) continue
+        const score = (1 - pref) * (d / ARENA_RADIUS) + pref * (h.hp / h.maxHp)
+        if (score < bestScore) {
+          bestScore = score
+          best = h
         }
       }
-      this.events.push({ t: 'bolt', from: [hero.x, hero.z], to: [target.x, target.z] })
+      if (!best) return
+      hero.cd = hero.cls.cooldown
+      const amount = Math.min(hero.cls.heal, best.maxHp - best.hp)
+      best.hp += amount
+      this.stats.healing += amount
+      hero.healing += amount
+      this.events.push({ t: 'heal', from: [hero.x, hero.z], to: [best.x, best.z] })
+      return
+    }
+
+    for (const m of this.monsters) {
+      const d = Math.hypot(m.x - hero.x, m.z - hero.z)
+      if (d > hero.cls.range) continue
+      const score = (1 - pref) * (d / ARENA_RADIUS) + pref * (m.hp / m.maxHp)
+      if (score < bestScore) {
+        bestScore = score
+        best = m
+      }
+    }
+    if (!best) return
+    hero.cd = hero.cls.cooldown
+    if (hero.cls.aoe) {
+      for (const m of this.monsters) {
+        if (Math.hypot(m.x - best.x, m.z - best.z) <= hero.cls.aoe) {
+          m.hp -= hero.cls.dmg
+          this.stats.damage += hero.cls.dmg
+          hero.damage += hero.cls.dmg
+        }
+      }
+      this.events.push({ t: 'bolt', from: [hero.x, hero.z], to: [best.x, best.z] })
+      this.events.push({ t: 'aoe', at: [best.x, best.z], r: hero.cls.aoe })
     } else {
-      target.hp -= hero.cls.dmg
+      best.hp -= hero.cls.dmg
       this.stats.damage += hero.cls.dmg
+      hero.damage += hero.cls.dmg
       this.events.push({
         t: hero.cls.range > 3 ? 'arrow' : 'slash',
         from: [hero.x, hero.z],
-        to: [target.x, target.z],
+        to: [best.x, best.z],
       })
     }
   }
