@@ -3,13 +3,15 @@ import { ARENA_RADIUS, HERO_CLASSES } from '../sim/engine.js'
 // HUD : mur de mini-arènes (une par worker), courbe de fitness, état de
 // l'équipe rejouée et journal d'apprentissage.
 export class HUD {
-  constructor({ workerCount, onPauseToggle, onReset }) {
+  constructor({ workerCount, onPauseToggle, onReset, onReplaySpeed, onGhostsToggle, onSelectRecord }) {
     this.genInfo = document.getElementById('gen-info')
     this.replayInfo = document.getElementById('replay-info')
     this.teamGen = document.getElementById('team-gen')
     this.teamGrid = document.getElementById('team-grid')
     this.chart = document.getElementById('chart')
     this.log = document.getElementById('log')
+    this.recordsList = document.getElementById('records-list')
+    this.onSelectRecord = onSelectRecord
     this.workersTitle = document.getElementById('workers-title')
     this.workersTitle.textContent = `Simulations parallèles — ${workerCount} cœurs`
 
@@ -19,6 +21,21 @@ export class HUD {
       this.pauseBtn.textContent = paused ? 'Reprendre l’évolution' : 'Suspendre l’évolution'
     })
     document.getElementById('reset').addEventListener('click', onReset)
+
+    this.replaySpeedButtons = [...document.querySelectorAll('[data-rspeed]')]
+    for (const btn of this.replaySpeedButtons) {
+      btn.addEventListener('click', () => {
+        this.replaySpeedButtons.forEach((b) => b.classList.remove('active'))
+        btn.classList.add('active')
+        onReplaySpeed(Number(btn.dataset.rspeed))
+      })
+    }
+
+    this.ghostsBtn = document.getElementById('ghosts')
+    this.ghostsBtn.addEventListener('click', () => {
+      const n = onGhostsToggle()
+      this.ghostsBtn.textContent = `Fantômes : ${n}`
+    })
 
     // Mini-canvases, un par worker
     this.cells = []
@@ -146,6 +163,24 @@ export class HUD {
     ctx.fillText('record', w - 44, 12)
     ctx.fillStyle = '#c96f4a'
     ctx.fillRect(w - 58, 6, 9, 7)
+  }
+
+  resetControls() {
+    this.pauseBtn.textContent = 'Suspendre l’évolution'
+  }
+
+  // Liste des matchs records : cliquer sur l'un d'eux le rejoue.
+  renderRecords(records, activeId) {
+    this.recordsList.innerHTML = ''
+    records.forEach((rec) => {
+      const li = document.createElement('li')
+      const btn = document.createElement('button')
+      btn.textContent = `Gén. ${rec.generation} — ${Math.round(rec.fitness)} pts, vague ${rec.waves}`
+      if (rec.id === activeId) btn.classList.add('active')
+      btn.addEventListener('click', () => this.onSelectRecord(rec))
+      li.appendChild(btn)
+      this.recordsList.appendChild(li)
+    })
   }
 
   setGenInfo(generation, best, mean) {

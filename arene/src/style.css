@@ -131,13 +131,58 @@ body {
   background: var(--paper);
 }
 
-/* ---- Mur de simulations ---- */
+/* ---- Vitesse (rejeu) ---- */
 
-.workers-panel {
+.hud-speed {
+  display: flex;
+  background: var(--paper-70);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(44, 42, 36, 0.12);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.hud-speed button {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 10px 13px;
+  min-width: 44px;
+  cursor: pointer;
+  transition: background 180ms cubic-bezier(0.25, 1, 0.5, 1), color 180ms;
+}
+
+.hud-speed button + button {
+  border-left: 1px solid rgba(44, 42, 36, 0.1);
+}
+
+.hud-speed button:hover {
+  color: var(--ink);
+}
+
+.hud-speed button.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* ---- Colonne droite : mur de simulations + rejeux ---- */
+
+.right-col {
   position: absolute;
   top: 84px;
   right: 20px;
+  bottom: 170px;
   width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workers-panel,
+.records-panel {
   background: var(--paper-70);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(44, 42, 36, 0.14);
@@ -145,7 +190,48 @@ body {
   padding: 12px;
 }
 
+.records-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.records-panel ol {
+  list-style: none;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  overscroll-behavior: contain;
+}
+
+.records-panel li button {
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: background 150ms, border-color 150ms;
+}
+
+.records-panel li button:hover {
+  background: rgba(44, 42, 36, 0.07);
+}
+
+.records-panel li button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .workers-panel h2,
+.records-panel h2,
 .team-panel h2,
 .chart-box h2,
 .log-box h2 {
@@ -321,7 +407,7 @@ body {
 /* ---- Mobile ---- */
 
 @media (max-width: 900px) {
-  .workers-panel,
+  .right-col,
   .team-panel {
     display: none;
   }

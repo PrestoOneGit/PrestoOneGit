@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { Sim, TICK, mulberry32, randomTeamGenome } from './sim/engine.js'
-import { Evolution } from './ga/evolution.js'
+import { Evolution, WORKER_COUNT } from './ga/evolution.js'
 import { Arena3D } from './view/arena3d.js'
 import { HUD } from './ui/hud.js'
 
@@ -47,45 +47,92 @@ scene.add(sunlight)
 
 const arena = new Arena3D(scene)
 
-// ---- Rejeu du meilleur match dans le fil principal ----
+// ---- Rejeu : bibliothèque de records, fantômes, contrôles ----
 
-let replaySim = null
-let replayMeta = null // {generation, fitness}
-let replayRestartTimer = 0
-
-function startReplay(genome, seed, meta) {
-  replaySim = new Sim(genome, seed)
-  replayMeta = meta
-  arena.attach(replaySim)
-}
-
-// Le premier rejeu montre une équipe aléatoire, le temps que l'évolution démarre.
-startReplay(randomTeamGenome(mulberry32(42)), 1, { generation: 0, fitness: 0 })
-
-// ---- Évolution ----
-
+const GHOST_CYCLE = [3, 6, 0]
+let ghostCount = 3
+let replaySpeed = 1
+let nextRecordId = 1
 let evolution = null
 let hud = null
+
+// Les matchs sont déterministes : {genome, seed} suffit à revoir une passe.
+const records = [] // {id, genome, seed, generation, fitness, waves}
+let replaySim = null
+let replayMeta = null // record en cours de rejeu
+let pinned = false // true si l'utilisateur a choisi un rejeu à la main
+let pendingRecord = null // nouveau record à jouer à la fin du match en cours
+let replayRestartTimer = 0
+let simAccumulator = 0
+
+function startReplay(record) {
+  replaySim = new Sim(record.genome, record.seed)
+  replayMeta = record
+  simAccumulator = 0
+  arena.attach(replaySim)
+
+  // Fantômes : les records précédents rejoués sur la même graine.
+  const ghosts = records
+    .filter((r) => r.id !== record.id)
+    .slice(0, ghostCount)
+    .map((r) => new Sim(r.genome, record.seed))
+  arena.attachGhosts(ghosts)
+  hud?.renderRecords(records, record.id)
+}
+
+function latestRecord() {
+  return records[0] ?? null
+}
+
+// Équipe aléatoire en attendant le premier record de l'évolution.
+const bootstrap = {
+  id: 0,
+  genome: randomTeamGenome(mulberry32(42)),
+  seed: 11,
+  generation: 0,
+  fitness: 0,
+  waves: 0,
+}
+startReplay(bootstrap)
+
+// ---- Évolution ----
 
 function describeImprovement(best, previous) {
   if (!previous) {
     return `Gén. ${best.generation} — première équipe de référence (fitness ${Math.round(best.fitness)}, vague ${best.waves}).`
   }
   const gain = (((best.fitness - previous.fitness) / previous.fitness) * 100).toFixed(1)
-  return `Gén. ${best.generation} — nouveau record ${Math.round(best.fitness)} (vague ${best.waves}, +${gain} %). Les cerveaux s’affinent.`
+  return `Gén. ${best.generation} — nouveau record ${Math.round(best.fitness)} (vague ${best.waves}, +${gain} %).`
 }
 
 function createEvolution() {
   evolution = new Evolution({
-    onSnapshot: (workerId, genomeIndex, snap) => hud.drawSnapshot(workerId, genomeIndex, snap),
+    onSnapshot: (workerId, genomeIndex, snap) => hud?.drawSnapshot(workerId, genomeIndex, snap),
     onGeneration: (gen, best, mean) => {
-      hud.setGenInfo(gen, best, mean)
-      hud.drawChart(evolution.history)
+      hud?.setGenInfo(gen, best, mean)
+      hud?.drawChart(evolution.history)
     },
     onNewBest: (best, previous) => {
-      hud.addLog(describeImprovement(best, previous))
-      // Le rejeu bascule sur la nouvelle meilleure équipe
-      startReplay(best.genome, best.seed, { generation: best.generation, fitness: best.fitness })
+      hud?.addLog(describeImprovement(best, previous))
+      const record = {
+        id: nextRecordId++,
+        genome: best.genome.slice(),
+        seed: best.seed,
+        generation: best.generation,
+        fitness: best.fitness,
+        waves: best.waves,
+      }
+      records.unshift(record)
+      if (records.length > 20) records.pop()
+      hud?.renderRecords(records, replayMeta?.id)
+      // On ne vole pas le match en cours : le nouveau record passera
+      // en rejeu à la fin de la passe actuelle (sauf rejeu épinglé).
+      // Exception : le tout premier record remplace tout de suite
+      // l'équipe aléatoire de démarrage.
+      if (!pinned) {
+        if (replayMeta?.id === 0) startReplay(record)
+        else pendingRecord = record
+      }
     },
   })
   evolution.start()
@@ -93,19 +140,40 @@ function createEvolution() {
 }
 
 hud = new HUD({
-  workerCount: Math.min(8, Math.max(2, (navigator.hardwareConcurrency || 4) - 1)),
+  workerCount: WORKER_COUNT,
   onPauseToggle: () => {
     evolution.paused = !evolution.paused
     return evolution.paused
   },
   onReset: () => {
     evolution.stop()
+    records.length = 0
+    pendingRecord = null
+    pinned = false
     hud.addLog('Nouveau départ : population réinitialisée, tout est à réapprendre.')
+    hud.resetControls()
+    hud.renderRecords(records, null)
+    startReplay(bootstrap)
     createEvolution()
+  },
+  onReplaySpeed: (s) => {
+    replaySpeed = s
+  },
+  onGhostsToggle: () => {
+    ghostCount = GHOST_CYCLE[(GHOST_CYCLE.indexOf(ghostCount) + 1) % GHOST_CYCLE.length]
+    if (replayMeta) startReplay(replayMeta)
+    return ghostCount
+  },
+  onSelectRecord: (record) => {
+    // Rejeu choisi à la main : on l'épingle le temps de la passe.
+    pinned = true
+    pendingRecord = null
+    startReplay(record)
   },
 })
 
 createEvolution()
+hud.renderRecords(records, bootstrap.id)
 
 // ---- Boucle de rendu ----
 
@@ -121,39 +189,48 @@ resize()
 
 const clock = new THREE.Clock()
 let elapsed = 0
-let simAccumulator = 0
+
+function stepReplay(dt) {
+  if (!replaySim) return
+  if (replaySim.finished) {
+    replayRestartTimer += dt
+    if (replayRestartTimer > 1.6) {
+      replayRestartTimer = 0
+      pinned = false
+      startReplay(pendingRecord ?? latestRecord() ?? replayMeta)
+      pendingRecord = null
+    }
+    return
+  }
+  simAccumulator += dt * replaySpeed
+  while (simAccumulator >= TICK) {
+    simAccumulator -= TICK
+    replaySim.step(TICK)
+    // Les fantômes avancent au même rythme que le match principal
+    for (const g of arena.ghosts) {
+      if (!g.sim.finished) g.sim.step(TICK)
+    }
+  }
+}
 
 function animate() {
   requestAnimationFrame(animate)
   const dt = Math.min(clock.getDelta(), 0.1)
   elapsed += dt
 
+  stepReplay(dt)
+
   if (replaySim) {
-    if (replaySim.finished) {
-      replayRestartTimer += dt
-      if (replayRestartTimer > 1.6) {
-        replayRestartTimer = 0
-        // Rejoue la meilleure équipe connue (ou la même équipe aléatoire au début)
-        const best = evolution?.bestEver
-        if (best) startReplay(best.genome, best.seed, { generation: best.generation, fitness: best.fitness })
-        else replaySim = new Sim(replaySim.genome, 1)
-        if (!best) arena.attach(replaySim)
-      }
-    } else {
-      simAccumulator += dt
-      while (simAccumulator >= TICK) {
-        simAccumulator -= TICK
-        replaySim.step(TICK)
-      }
-    }
     const alive = replaySim.heroes.filter((h) => h.alive).length
+    const label = pinned ? 'épinglé — ' : ''
     hud.setReplayInfo(
-      `équipe gén. ${replayMeta.generation} — vague ${replaySim.wave}, ${alive}/4 debout`
+      `${label}équipe gén. ${replayMeta.generation} — vague ${replaySim.wave}, ${alive}/4 debout`
     )
     hud.updateTeamStats(replaySim, replayMeta.generation)
   }
 
   arena.update(dt, elapsed, camera)
+  arena.updateGhosts()
   controls.update()
   renderer.render(scene, camera)
 }
@@ -167,5 +244,8 @@ window.arene = {
   },
   get replay() {
     return replaySim
+  },
+  get records() {
+    return records
   },
 }

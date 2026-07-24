@@ -23,14 +23,27 @@
         </div>
         <div class="hud-controls">
           <div class="hud-replay" id="replay-info">Rejeu : —</div>
+          <div class="hud-speed" role="group" aria-label="Vitesse du rejeu">
+            <button data-rspeed="0" aria-label="Pause du rejeu">II</button>
+            <button data-rspeed="1" class="active">x1</button>
+            <button data-rspeed="2">x2</button>
+            <button data-rspeed="4">x4</button>
+          </div>
+          <button id="ghosts" class="hud-btn hud-btn-secondary">Fantômes : 3</button>
           <button id="pause-evo" class="hud-btn hud-btn-secondary">Suspendre l’évolution</button>
           <button id="reset" class="hud-btn">Nouveau départ</button>
         </div>
       </header>
 
-      <aside class="workers-panel">
-        <h2 id="workers-title">Simulations parallèles</h2>
-        <div class="workers-grid" id="workers-grid"></div>
+      <aside class="right-col">
+        <section class="workers-panel">
+          <h2 id="workers-title">Simulations parallèles</h2>
+          <div class="workers-grid" id="workers-grid"></div>
+        </section>
+        <section class="records-panel">
+          <h2>Rejeux — matchs records</h2>
+          <ol id="records-list"></ol>
+        </section>
       </aside>
 
       <aside class="team-panel" id="team-panel">

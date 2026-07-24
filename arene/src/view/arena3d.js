@@ -15,6 +15,7 @@ export class Arena3D {
     this.monsterMeshes = new Map()
     this.vfx = []
     this.sim = null
+    this.ghosts = [] // {sim, meshes[]}
     scene.add(this.group)
     this.buildArena()
   }
@@ -140,6 +141,49 @@ export class Arena3D {
       const mesh = this.makeHeroMesh(hero)
       this.heroMeshes.push(mesh)
       this.group.add(mesh)
+    }
+  }
+
+  // ---- Mode fantôme : d'anciens champions rejoués en surimpression ----
+  // Seuls leurs héros sont dessinés (translucides, sans barres ni effets) :
+  // on compare les trajectoires, pas les combats complets.
+
+  attachGhosts(sims) {
+    for (const g of this.ghosts) {
+      for (const m of g.meshes) {
+        this.group.remove(m)
+        m.geometry.dispose()
+        m.material.dispose()
+      }
+    }
+    this.ghosts = []
+    for (const sim of sims) {
+      const meshes = sim.heroes.map((hero) => {
+        const mat = new THREE.MeshStandardMaterial({
+          color: hero.cls.color,
+          transparent: true,
+          opacity: 0.24,
+          depthWrite: false,
+          flatShading: true,
+          roughness: 0.9,
+        })
+        const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.75, 2, 6), mat)
+        mesh.position.y = 0.72
+        this.group.add(mesh)
+        return mesh
+      })
+      this.ghosts.push({ sim, meshes })
+    }
+  }
+
+  updateGhosts() {
+    for (const g of this.ghosts) {
+      const faded = g.sim.finished
+      g.sim.heroes.forEach((hero, i) => {
+        const mesh = g.meshes[i]
+        mesh.position.set(hero.x, 0.72, hero.z)
+        mesh.material.opacity = !hero.alive || faded ? 0.07 : 0.24
+      })
     }
   }
 

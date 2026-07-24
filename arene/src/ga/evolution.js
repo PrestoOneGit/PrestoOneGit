@@ -10,6 +10,9 @@ const ELITES = 4
 const FRESH = 2
 const SEEDS_PER_EVAL = 3
 
+// Source unique pour le nombre de workers : le HUD s'aligne dessus.
+export const WORKER_COUNT = Math.min(11, Math.max(2, (navigator.hardwareConcurrency || 4) - 1))
+
 export class Evolution {
   constructor({ onSnapshot, onGeneration, onNewBest }) {
     this.rng = mulberry32((Math.random() * 2 ** 31) | 0)
@@ -24,8 +27,7 @@ export class Evolution {
     this.running = false
     this.paused = false
 
-    const n = Math.min(11, Math.max(2, (navigator.hardwareConcurrency || 4) - 1))
-    this.workers = Array.from({ length: n }, (_, i) => {
+    this.workers = Array.from({ length: WORKER_COUNT }, (_, i) => {
       const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
       w.postMessage({ type: 'init', workerId: i })
       w.onmessage = (e) => this.handleMessage(e.data)

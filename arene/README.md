@@ -44,6 +44,13 @@ De préférence dans Chrome/Chromium (meilleur support Web Workers + WebGPU à t
   des couleurs, des barres de vie et des effets (flèches, anneaux d'AoE, soins),
   pas des modèles. La scène rejoue en continu le meilleur match connu pendant
   que l'évolution continue en arrière-plan.
+- **Rejeux** : chaque match record est archivé (les simulations sont
+  déterministes : un génome + une graine suffisent à revoir une passe).
+  Cliquer sur un record dans la liste le rejoue, épinglé le temps de la passe.
+  Contrôles pause / x1 / x2 / x4 indépendants de l'évolution.
+- **Mode fantôme** : les champions précédents rejouent en surimpression
+  translucide autour de l'équipe actuelle (3 ou 6 fantômes) — on voit
+  littéralement la lignée s'améliorer, trajectoire par trajectoire.
 - **Le panneau équipe** : vie, dégâts infligés et soins de chaque héros en direct.
 - **Le mur de simulations** : une mini-arène par worker, en temps réel.
 - **La courbe de fitness** et le **journal d'apprentissage** (records, % de gain).

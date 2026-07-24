@@ -38,6 +38,10 @@ const MONSTER_TYPES = {
   troll: { hp: 420, dmg: 24, speed: 2.2, range: 2.0, cooldown: 1.8, size: 1.35 },
 }
 
+// Buffers partagés entre toutes les instances de Sim : sûr tant que les
+// simulations s'exécutent séquentiellement dans un même thread (c'est le
+// cas partout : workers, rejeu principal et fantômes tournent pas à pas).
+// Ne JAMAIS entrelacer deux step() en concurrence dans un même thread.
 const obs = new Float32Array(INPUT_SIZE)
 const act = new Float32Array(4)
 
@@ -77,11 +81,14 @@ export class Sim {
   }
 
   fitness() {
+    // Les soins pèsent volontairement peu : chaque dégât tanké puis soigné
+    // rapporterait double sinon, et « traire » un monstre deviendrait une
+    // stratégie viable. Le vrai moteur du score, ce sont les vagues.
     const alive = this.heroes.filter((h) => h.alive).length
     return (
       this.stats.waves * 600 +
       this.stats.damage * 2 +
-      this.stats.healing * 1.2 +
+      this.stats.healing * 0.6 +
       this.time * 6 +
       alive * 150
     )
@@ -206,8 +213,8 @@ export class Sim {
     const mag = Math.min(Math.hypot(mx, mz), 1)
     if (mag > 0.05) {
       const sp = hero.cls.speed * mag * dt
-      hero.x += (mx / (mag || 1)) * sp * mag
-      hero.z += (mz / (mag || 1)) * sp * mag
+      hero.x += (mx / mag) * sp
+      hero.z += (mz / mag) * sp
     }
 
     // Règle du jeu : on ne sort pas de l'arène, on ne se superpose pas
