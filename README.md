@@ -8,6 +8,8 @@ Montage PC · Maintenance · Windows · Linux · Graphisme · Motion design · P
 
 ---
 
+**Installation en local** : voir [`DEMARRAGE.md`](DEMARRAGE.md) (`npm run setup`, puis `npm run tour`).
+
 ### Projets
 
 - [**La Tour**](tour/) — 5 aventuriers IA (réseaux de neurones + neuro-évolution, compo d'équipe évoluée) grimpent une tour de 100 étages : classes, sorts, afflictions, boss, repos votés par les IA. Voir [`tour/README.md`](tour/README.md).
