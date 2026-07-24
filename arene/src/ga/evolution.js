@@ -1,5 +1,8 @@
 import { mulberry32 } from '../sim/engine.js'
 import { crossoverTeams, mutateTeam, randomTeamGenome } from '../sim/brain.js'
+// Import « inline » : le worker est embarqué dans le bundle (blob), ce qui
+// permet de distribuer l'app en un seul fichier HTML autonome.
+import ArenaWorker from './worker.js?worker&inline'
 
 // Neuro-évolution : une population d'équipes dont chaque héros est un
 // réseau de neurones. Évaluation en parallèle dans un pool de Web Workers,
@@ -28,7 +31,7 @@ export class Evolution {
     this.paused = false
 
     this.workers = Array.from({ length: WORKER_COUNT }, (_, i) => {
-      const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
+      const w = new ArenaWorker()
       w.postMessage({ type: 'init', workerId: i })
       w.onmessage = (e) => this.handleMessage(e.data)
       return w
