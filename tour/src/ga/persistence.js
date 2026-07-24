@@ -7,7 +7,7 @@
 const DB_NAME = 'tour-training'
 const STORE = 'sessions'
 const KEY = 'current'
-export const SAVE_FORMAT = 2
+export const SAVE_FORMAT = 3
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -97,25 +97,43 @@ export async function clearSession() {
 }
 
 // ---- Export / import fichier ----
-// Format JSON lisible : les génomes deviennent des tableaux de nombres,
-// arrondis à 4 décimales pour diviser la taille du fichier par ~2 sans
-// effet mesurable sur le comportement des réseaux.
+// Les génomes sont encodés en base64 des octets bruts du Float32Array.
+//
+// Une version précédente les écrivait en tableaux de nombres arrondis à
+// 4 décimales, pour alléger le fichier. Un audit a montré que c'était
+// destructeur : un run sur vingt seulement se reproduisait à l'identique
+// (écarts jusqu'à 2600 points de fitness). L'arrondi déplace chaque poids
+// d'un rien, mais sur ~12 000 poids cela suffit à faire basculer une
+// décision de réseau — et un run diverge alors complètement. Le base64
+// est à la fois exact et deux fois plus compact que les décimales.
 
-function genomeToArray(g) {
-  const out = new Array(g.length)
-  for (let i = 0; i < g.length; i++) out[i] = Math.round(g[i] * 10000) / 10000
-  return out
+function genomeToBase64(g) {
+  const bytes = new Uint8Array(g.buffer, g.byteOffset, g.byteLength)
+  let binary = ''
+  const CHUNK = 0x8000 // évite de dépasser la taille d'argument de apply()
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+function base64ToGenome(encoded) {
+  const binary = atob(encoded)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Float32Array(bytes.buffer)
 }
 
 export function exportSession(state) {
   return {
     format: SAVE_FORMAT,
+    encoding: 'base64-float32',
     exportedAt: new Date().toISOString(),
     generation: state.generation,
     history: state.history,
-    population: state.population.map(genomeToArray),
-    records: state.records.map((r) => ({ ...r, genome: genomeToArray(r.genome) })),
-    bestEver: state.bestEver ? { ...state.bestEver, genome: genomeToArray(state.bestEver.genome) } : null,
+    population: state.population.map(genomeToBase64),
+    records: state.records.map((r) => ({ ...r, genome: genomeToBase64(r.genome) })),
+    bestEver: state.bestEver ? { ...state.bestEver, genome: genomeToBase64(state.bestEver.genome) } : null,
   }
 }
 
@@ -126,12 +144,13 @@ export function importSession(json) {
         'Il vient probablement d’une version où les règles ou les réseaux étaient différents.'
     )
   }
+  const decode = (g) => (typeof g === 'string' ? base64ToGenome(g) : Float32Array.from(g))
   return {
     generation: json.generation ?? 0,
-    population: json.population.map((a) => Float32Array.from(a)),
+    population: json.population.map(decode),
     history: json.history ?? [],
-    records: (json.records ?? []).map((r) => ({ ...r, genome: Float32Array.from(r.genome) })),
-    bestEver: json.bestEver ? { ...json.bestEver, genome: Float32Array.from(json.bestEver.genome) } : null,
+    records: (json.records ?? []).map((r) => ({ ...r, genome: decode(r.genome) })),
+    bestEver: json.bestEver ? { ...json.bestEver, genome: decode(json.bestEver.genome) } : null,
   }
 }
 

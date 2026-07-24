@@ -135,6 +135,26 @@ Capsules, 0,92 en Pions, 0,95 en Deluxe — l'écart est du bruit. Le sélecteur
 sert donc au confort (vieille machine, session en arrière-plan), pas à
 protéger le calcul.
 
+## Audit : les résultats sont-ils réels ?
+
+`audit/` contient une suite de tests écrits pour **pouvoir échouer**, et
+c'est ce qu'ils ont fait — trois défauts réels ont été trouvés et corrigés
+(paysage de fitness en escalier, trop peu de graines par évaluation, export
+de session destructeur). Voir [`audit/README.md`](audit/README.md) pour le
+détail de chaque test et de chaque correction.
+
+```bash
+node audit/audit.mjs                      # suite complète
+node audit/cross-check.mjs session.json   # les chiffres du HUD, recalculés hors de l'appli
+```
+
+Ce qui est vérifié : déterminisme au bit près, réalité du travail effectué,
+effondrement des performances si l'on vide ou mélange les poids des réseaux,
+généralisation à des graines jamais vues, supériorité sur une recherche
+aléatoire à budget égal, contrôle négatif sans sélection, et reproduction
+exacte dans un processus Node indépendant des fitness annoncées par
+l'interface.
+
 ## Prochaine étape : la phase GPU
 
 Le moteur est volontairement pur et data-driven pour le portage Python

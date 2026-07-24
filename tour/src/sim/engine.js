@@ -73,6 +73,7 @@ export class TowerRun {
     this.events = []
     this.monsters = []
     this.nextMonsterId = 1
+    this.monstersKilled = 0
     this.over = false
     this.endReason = null
     this.timeline = []
@@ -124,9 +125,27 @@ export class TowerRun {
     return this.over
   }
 
+  // Le score d'un run. Historique : une première version ne comptait que
+  // les étages franchis (×1000) et la progression de l'étage courant.
+  // Un audit a montré que 99,4 % de la variance venait alors du seul
+  // nombre ENTIER d'étages : un paysage en escalier à marches plates, où
+  // aucune mutation ne pouvait être récompensée tant qu'elle ne faisait
+  // pas gagner un étage entier. D'où des termes continus, cumulés sur
+  // tout le run, qui donnent une pente à gravir à l'intérieur d'un étage.
   fitness() {
     const alive = this.heroes.filter((h) => h.alive).length
-    return this.floorsCleared * 1000 + this.floorProgress() * 600 + alive * 50
+    const totalDamage = this.heroes.reduce((s, h) => s + h.damage, 0)
+    const hpFraction =
+      this.heroes.reduce((s, h) => s + (h.alive ? h.hp / h.maxHp : 0), 0) / SLOTS
+    return (
+      this.floorsCleared * 1000 +
+      this.floorProgress() * 500 +
+      this.monstersKilled * 12 +
+      totalDamage * 0.05 +
+      hpFraction * 200 +
+      alive * 60 +
+      this.time * 2
+    )
   }
 
   floorProgress() {
@@ -880,6 +899,7 @@ export class TowerRun {
     for (let i = this.monsters.length - 1; i >= 0; i--) {
       const m = this.monsters[i]
       if (m.hp <= 0) {
+        this.monstersKilled++
         this.events.push({ t: 'monsterDie', at: [m.x, m.z], size: m.size })
         this.monsters.splice(i, 1)
       }

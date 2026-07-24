@@ -9,7 +9,13 @@ import TowerWorker from './worker.js?worker&inline'
 const POP_SIZE = 32
 const ELITES = 4
 const FRESH = 2
-const SEEDS_PER_EVAL = 2
+// Nombre de graines par évaluation. Mesuré (audit/experiment-seeds.mjs) :
+// avec 2 graines, le champion est autant « chanceux sur ces deux
+// configurations » que bon — 20 % de son score ne se transfère pas à des
+// graines inédites, et cette part ne s'hérite pas. Avec 4, le biais tombe
+// à 3-4 % et l'avantage sur une recherche aléatoire à budget égal est
+// maximal (+1416 points contre +1007 à 2 graines, +473 à 8).
+const SEEDS_PER_EVAL = 4
 const ARCHIVE_LIMIT = 400 // champions conservés en mémoire, pour rejouer
 const RECORD_LIMIT = 60 // records conservés et sauvegardés
 export const AUTOSAVE_EVERY = 10
