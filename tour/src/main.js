@@ -2,7 +2,11 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { TICK, TowerRun, mulberry32 } from './sim/engine.js'
 import { describeComposition, randomTeamGenome } from './sim/brain.js'
-import { Evolution, WORKER_COUNT } from './ga/evolution.js'
+import { analyzeRun, reportToMarkdown } from './sim/report.js'
+import { AUTOSAVE_EVERY, Evolution, WORKER_COUNT } from './ga/evolution.js'
+import {
+  clearSession, downloadJson, exportSession, importSession, loadSession, saveSession,
+} from './ga/persistence.js'
 import { QUALITY_LEVELS, Tower3D } from './view/tower3d.js'
 import { HUD } from './ui/hud.js'
 
@@ -49,15 +53,14 @@ scene.add(sunlight)
 const tower = new Tower3D(scene, 'pions')
 let qualityIndex = QUALITY_LEVELS.findIndex((q) => q.id === 'pions')
 
-// ---- Rejeu : records, contrôles ----
+// ---- Rejeu ----
 
 let replaySpeed = 1
-let nextRecordId = 1
 let evolution = null
 let hud = null
+let lastReport = null
 
 // Les runs sont déterministes : {genome, seed} suffit à revoir une passe.
-const records = [] // {id, genome, seed, generation, fitness, floors}
 let replayRun = null
 let replayMeta = null
 let pinned = false
@@ -65,27 +68,24 @@ let pendingRecord = null
 let replayRestartTimer = 0
 let simAccumulator = 0
 
-function startReplay(record) {
-  replayRun = new TowerRun(record.genome, record.seed)
-  replayMeta = record
+const bootstrap = {
+  generation: 0,
+  genome: randomTeamGenome(mulberry32(42)),
+  seed: 11,
+  fitness: 0,
+  floors: 0,
+  bootstrap: true,
+}
+
+function startReplay(entry) {
+  replayRun = new TowerRun(entry.genome, entry.seed)
+  replayMeta = entry
   simAccumulator = 0
   tower.attach(replayRun)
   hud?.buildTeamPanel(replayRun)
-  hud?.renderRecords(records, record.id)
+  hud?.renderRecords(evolution?.records ?? [], entry.generation)
 }
 
-function latestRecord() {
-  return records[0] ?? null
-}
-
-const bootstrap = {
-  id: 0,
-  genome: randomTeamGenome(mulberry32(42)),
-  seed: 11,
-  generation: 0,
-  fitness: 0,
-  floors: 0,
-}
 startReplay(bootstrap)
 
 // ---- Évolution ----
@@ -102,8 +102,21 @@ function describeImprovement(best, previous) {
   return `Gén. ${best.generation} — ${floorNote}. Compo : ${compo}.`
 }
 
-function createEvolution() {
+async function autosave(manual = false) {
+  if (!evolution) return
+  try {
+    const at = await saveSession(evolution.snapshotState())
+    const time = new Date(at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+    hud?.setSaveState(`Session sauvegardée à ${time} (gén. ${evolution.generation})`, true)
+  } catch (err) {
+    hud?.setSaveState(`Échec de la sauvegarde : ${err.message}`)
+    if (manual) hud?.addLog(`La sauvegarde a échoué : ${err.message}`)
+  }
+}
+
+function createEvolution(resumeFrom = null) {
   evolution = new Evolution({
+    resumeFrom,
     onSnapshot: (workerId, genomeIndex, snap) => hud?.drawSnapshot(workerId, genomeIndex, snap),
     onGeneration: (gen, best, mean) => {
       hud?.setGenInfo(gen, best, mean)
@@ -111,44 +124,94 @@ function createEvolution() {
     },
     onNewBest: (best, previous) => {
       hud?.addLog(describeImprovement(best, previous))
-      const record = {
-        id: nextRecordId++,
-        genome: best.genome.slice(),
-        seed: best.seed,
-        generation: best.generation,
-        fitness: best.fitness,
-        floors: best.floors,
-      }
-      records.unshift(record)
-      if (records.length > 40) records.pop()
-      hud?.renderRecords(records, replayMeta?.id)
+      hud?.renderRecords(evolution.records, replayMeta?.generation)
       // On ne vole pas le run en cours — sauf pour remplacer l'équipe
       // aléatoire de démarrage.
       if (!pinned) {
-        if (replayMeta?.id === 0) startReplay(record)
-        else pendingRecord = record
+        if (replayMeta?.bootstrap) startReplay(best)
+        else pendingRecord = best
       }
     },
+    onAutosave: () => autosave(),
   })
   evolution.start()
   return evolution
 }
 
+// ---- Actions du menu session ----
+
+async function handleSessionAction(action) {
+  switch (action) {
+    case 'save':
+      await autosave(true)
+      break
+    case 'export':
+      downloadJson(exportSession(evolution.snapshotState()), `tour-session-gen${evolution.generation}.json`)
+      break
+    case 'import':
+      document.getElementById('import-file').click()
+      break
+    case 'wipe':
+      await clearSession()
+      hud.setSaveState('Sauvegarde effacée')
+      break
+    case 'copyReport': {
+      if (!lastReport) return
+      const md = reportToMarkdown(lastReport)
+      try {
+        await navigator.clipboard.writeText(md)
+        hud.addLog('Rapport copié dans le presse-papier (format markdown).')
+      } catch {
+        // Le presse-papier peut être refusé hors contexte sécurisé :
+        // on retombe sur un téléchargement, jamais sur un échec muet.
+        downloadJson(md, `rapport-gen${lastReport.meta.generation}.md`)
+        hud.addLog('Presse-papier indisponible : le rapport a été téléchargé.')
+      }
+      break
+    }
+    case 'exportReport':
+      if (lastReport) downloadJson(lastReport, `rapport-gen${lastReport.meta.generation}.json`)
+      break
+  }
+}
+
+document.getElementById('import-file').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const state = importSession(JSON.parse(await file.text()))
+    evolution.stop()
+    pinned = false
+    pendingRecord = null
+    createEvolution(state)
+    hud.drawChart(evolution.history)
+    hud.renderRecords(evolution.records, null)
+    hud.addLog(`Session importée : reprise à la génération ${state.generation}.`)
+    startReplay(evolution.bestEver ?? bootstrap)
+  } catch (err) {
+    hud.addLog(`Import impossible : ${err.message}`)
+  }
+  e.target.value = ''
+})
+
+// ---- HUD ----
+
 hud = new HUD({
   workerCount: WORKER_COUNT,
   onPauseToggle: () => {
     evolution.paused = !evolution.paused
+    if (evolution.paused) autosave()
     return evolution.paused
   },
-  onReset: () => {
+  onReset: async () => {
     evolution.stop()
-    records.length = 0
+    await clearSession()
     pendingRecord = null
     pinned = false
     hud.addLog('Nouveau départ : population réinitialisée, la tour attend de nouveaux prétendants.')
-    // (le bouton qualité garde son réglage : c'est un préréglage d'affichage)
     hud.resetControls()
-    hud.renderRecords(records, null)
+    hud.renderRecords([], null)
+    hud.setSaveState('Session non sauvegardée')
     startReplay(bootstrap)
     createEvolution()
   },
@@ -168,11 +231,68 @@ hud = new HUD({
     pendingRecord = null
     startReplay(record)
   },
+  onPickGeneration: (gen) => {
+    const champion = evolution.championOf(gen)
+    if (!champion) {
+      const available = evolution.archivedGenerations()
+      const range = available.length
+        ? `générations disponibles : ${available[available.length - 1]} à ${available[0]}`
+        : 'aucune génération archivée pour l’instant'
+      hud.addLog(`Génération ${gen} introuvable — ${range}.`)
+      return
+    }
+    pinned = true
+    pendingRecord = null
+    startReplay(champion)
+    hud.addLog(`Rejeu de la génération ${gen} (étage ${champion.floors + 1}).`)
+  },
+  onReport: () => {
+    if (!replayMeta) return
+    // Le rapport rejoue le run en mode journalisé : mêmes graine et
+    // génome, donc exactement le run qu'on regarde.
+    lastReport = analyzeRun({
+      genome: replayMeta.genome,
+      seed: replayMeta.seed,
+      generation: replayMeta.generation,
+      fitness: replayMeta.fitness,
+    })
+    hud.showReport(lastReport)
+  },
+  onSessionAction: handleSessionAction,
 })
 
-createEvolution()
-hud.renderRecords(records, bootstrap.id)
-hud.buildTeamPanel(replayRun)
+// ---- Démarrage : reprise de session si elle existe ----
+
+async function boot() {
+  const saved = await loadSession()
+  if (saved?.incompatible) {
+    hud.setSaveState('Sauvegarde ignorée (format obsolète)')
+    hud.addLog(
+      'Une sauvegarde a été trouvée mais elle date d’une version où les règles avaient changé : ' +
+        'reprendre dessus donnerait des agents incohérents. Nouvel entraînement démarré.'
+    )
+    createEvolution()
+  } else if (saved) {
+    createEvolution(saved)
+    hud.drawChart(evolution.history)
+    hud.renderRecords(evolution.records, null)
+    const time = new Date(saved.savedAt).toLocaleString('fr-FR')
+    hud.setSaveState(`Reprise de la session du ${time}`, true)
+    hud.addLog(`Entraînement repris à la génération ${saved.generation}.`)
+    if (evolution.bestEver) startReplay(evolution.bestEver)
+  } else {
+    createEvolution()
+    hud.setSaveState(`Sauvegarde auto toutes les ${AUTOSAVE_EVERY} générations`)
+  }
+  hud.buildTeamPanel(replayRun)
+}
+
+boot()
+
+// Dernière sauvegarde avant fermeture de l'onglet (best-effort).
+window.addEventListener('pagehide', () => {
+  if (evolution) saveSession(evolution.snapshotState()).catch(() => {})
+})
 
 // ---- Boucle de rendu ----
 
@@ -196,7 +316,7 @@ function stepReplay(dt) {
     if (replayRestartTimer > 1.8) {
       replayRestartTimer = 0
       pinned = false
-      startReplay(pendingRecord ?? latestRecord() ?? replayMeta)
+      startReplay(pendingRecord ?? evolution?.bestEver ?? replayMeta)
       pendingRecord = null
     }
     return
@@ -238,6 +358,12 @@ window.tour = {
   get evolution() {
     return evolution
   },
+  get replay() {
+    return replayRun
+  },
+  get records() {
+    return evolution?.records ?? []
+  },
   get quality() {
     return tower.quality.id
   },
@@ -248,10 +374,27 @@ window.tour = {
     tower.setQuality(id)
     document.getElementById('quality').textContent = QUALITY_LEVELS[i].label
   },
-  get replay() {
-    return replayRun
+  playGeneration(gen) {
+    const champion = evolution?.championOf(gen)
+    if (champion) {
+      pinned = true
+      startReplay(champion)
+    }
+    return !!champion
   },
-  get records() {
-    return records
+  report(gen = replayMeta?.generation) {
+    const entry = gen === replayMeta?.generation ? replayMeta : evolution?.championOf(gen)
+    if (!entry) return null
+    lastReport = analyzeRun({
+      genome: entry.genome,
+      seed: entry.seed,
+      generation: entry.generation,
+      fitness: entry.fitness,
+    })
+    return lastReport
+  },
+  markdown(gen) {
+    const r = this.report(gen)
+    return r ? reportToMarkdown(r) : null
   },
 }

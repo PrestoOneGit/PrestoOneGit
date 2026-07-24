@@ -131,6 +131,202 @@ body {
   background: var(--paper);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.save-state {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.save-state.saved {
+  color: var(--green);
+}
+
+/* ---- Menu session ---- */
+
+.session-menu {
+  position: absolute;
+  top: 92px;
+  right: 20px;
+  z-index: 5;
+  display: grid;
+  gap: 2px;
+  background: var(--paper);
+  border: 1px solid rgba(44, 42, 36, 0.16);
+  border-radius: var(--radius);
+  padding: 6px;
+  pointer-events: auto;
+  box-shadow: 0 6px 24px rgba(20, 16, 12, 0.28);
+}
+
+.session-menu button {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  text-align: left;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 140ms;
+}
+
+.session-menu button:hover {
+  background: rgba(44, 42, 36, 0.08);
+}
+
+.session-menu button.danger {
+  color: #a8412f;
+}
+
+/* ---- Sélecteur de génération ---- */
+
+.records-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.records-head h2 {
+  margin-bottom: 0 !important;
+}
+
+.gen-picker {
+  display: flex;
+  gap: 4px;
+}
+
+.gen-picker input {
+  width: 62px;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(44, 42, 36, 0.18);
+  border-radius: 5px;
+  padding: 5px 6px;
+}
+
+.gen-picker button {
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  border-radius: 5px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+/* ---- Rapport ---- */
+
+.report-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: min(760px, calc(100vw - 40px));
+  max-height: min(78vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid rgba(44, 42, 36, 0.18);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(20, 16, 12, 0.45);
+}
+
+.report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid rgba(44, 42, 36, 0.12);
+}
+
+.report-head h2 {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+#report-close {
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+#report-close:hover {
+  background: rgba(44, 42, 36, 0.08);
+  color: var(--ink);
+}
+
+.report-body {
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.report-body h3 {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  margin: 12px 0 6px;
+}
+
+.report-body h3:first-child {
+  margin-top: 0;
+}
+
+.report-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-body th,
+.report-body td {
+  text-align: left;
+  padding: 4px 8px 4px 0;
+  border-bottom: 1px solid rgba(44, 42, 36, 0.08);
+  white-space: nowrap;
+}
+
+.report-body th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.report-scroll {
+  overflow-x: auto;
+}
+
+.report-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid rgba(44, 42, 36, 0.12);
+}
+
 /* ---- Vitesse (rejeu) ---- */
 
 .hud-speed {

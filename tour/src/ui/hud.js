@@ -4,7 +4,10 @@ import { CLASSES } from '../sim/data.js'
 // HUD : mur de mini-tours (une par worker), courbe de l'étage record,
 // équipe en rejeu (classes, vie, mana, stats) et journal d'ascension.
 export class HUD {
-  constructor({ workerCount, onPauseToggle, onReset, onReplaySpeed, onSelectRecord, onQualityToggle }) {
+  constructor({
+    workerCount, onPauseToggle, onReset, onReplaySpeed, onSelectRecord,
+    onQualityToggle, onPickGeneration, onReport, onSessionAction,
+  }) {
     this.genInfo = document.getElementById('gen-info')
     this.replayInfo = document.getElementById('replay-info')
     this.teamGen = document.getElementById('team-gen')
@@ -41,6 +44,50 @@ export class HUD {
       this.qualityBtn.textContent = onQualityToggle()
     })
 
+    // Rejouer une génération précise, pas seulement les records
+    document.getElementById('gen-form').addEventListener('submit', (e) => {
+      e.preventDefault()
+      const input = document.getElementById('gen-input')
+      const gen = Number.parseInt(input.value, 10)
+      if (Number.isFinite(gen)) onPickGeneration(gen)
+    })
+
+    // Rapport
+    this.reportPanel = document.getElementById('report-panel')
+    this.reportBody = document.getElementById('report-body')
+    document.getElementById('report').addEventListener('click', () => onReport())
+    document.getElementById('report-close').addEventListener('click', () => {
+      this.reportPanel.hidden = true
+    })
+    document.getElementById('report-copy').addEventListener('click', () => onSessionAction('copyReport'))
+    document.getElementById('report-json').addEventListener('click', () => onSessionAction('exportReport'))
+
+    // Menu session (sauvegarde / export / import)
+    this.saveState = document.getElementById('save-state')
+    this.sessionMenu = document.getElementById('session-menu')
+    const menuBtn = document.getElementById('save-menu')
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.sessionMenu.hidden = !this.sessionMenu.hidden
+    })
+    document.addEventListener('click', (e) => {
+      if (!this.sessionMenu.hidden && !this.sessionMenu.contains(e.target)) {
+        this.sessionMenu.hidden = true
+      }
+    })
+    const menuActions = {
+      'save-now': 'save',
+      'export-session': 'export',
+      'import-session': 'import',
+      'wipe-session': 'wipe',
+    }
+    for (const [id, action] of Object.entries(menuActions)) {
+      document.getElementById(id).addEventListener('click', () => {
+        this.sessionMenu.hidden = true
+        onSessionAction(action)
+      })
+    }
+
     this.cells = []
     const grid = document.getElementById('workers-grid')
     for (let i = 0; i < workerCount; i++) {
@@ -58,7 +105,68 @@ export class HUD {
   }
 
   resetControls() {
-    this.pauseBtn.textContent = 'Suspendre l’évolution'
+    this.pauseBtn.textContent = 'Suspendre'
+  }
+
+  setSaveState(text, saved = false) {
+    this.saveState.textContent = text
+    this.saveState.classList.toggle('saved', saved)
+  }
+
+  // Le rapport est rendu en tableaux lisibles ; le JSON et le markdown
+  // sont récupérables via les boutons d'export.
+  showReport(report) {
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
+    const m = report.meta
+    const rows = report.agents
+      .map((a) => {
+        const up = a.ameliorations.map((u) => `${u.id}×${u.rangs}`).join(', ') || '—'
+        const caps =
+          a.utilisation.capacites
+            .filter((c) => c.fois > 0)
+            .map((c) => `${c.label} ${c.fois}×`)
+            .join(', ') || '—'
+        return `<tr>
+          <td>${esc(a.label)}</td><td>${a.niveau}</td>
+          <td>${a.degatsInfliges}</td><td>${a.soins}</td><td>${a.degatsSubis}</td>
+          <td>${a.etageDeMort ? `étage ${a.etageDeMort}` : 'survit'}</td>
+          <td>${esc(up)}</td>
+          <td>${a.utilisation.dash}/${a.utilisation.course}/${a.utilisation.bond}</td>
+          <td>${esc(caps)}</td>
+        </tr>`
+      })
+      .join('')
+    const floors = report.etages
+      .map((f) => {
+        const monstres = Object.entries(f.monstres).map(([k, v]) => `${v}× ${k}`).join(', ')
+        const morts = f.morts.map((d) => d.agent).join(', ') || '—'
+        return `<tr>
+          <td>${f.etage}${f.echec ? ' ✗' : ''}</td><td>${f.boss ? 'boss' : ''}</td>
+          <td>${f.duree}s</td><td>${esc(monstres)}</td>
+          <td>${f.degatsInfliges}</td><td>${f.degatsSubis}</td>
+          <td>${esc(morts)}</td><td>${f.reposApres ? 'oui' : ''}</td>
+        </tr>`
+      })
+      .join('')
+
+    this.reportBody.innerHTML = `
+      <h3>Génération ${m.generation ?? '?'} — étage ${m.etageAtteint}, issue « ${esc(m.issue)} »</h3>
+      <p>${esc(m.compositionLisible)} · ${m.dureeSecondes}s · ${m.survivants}/5 survivants ·
+      ${m.reposUtilises} repos · ${report.totaux.degats} dégâts (${report.totaux.degatsParSeconde}/s),
+      ${report.totaux.soins} soins, ${report.totaux.degatsSubis} subis.</p>
+      <h3>Agents</h3>
+      <div class="report-scroll"><table>
+        <tr><th>Classe</th><th>Niv</th><th>Dégâts</th><th>Soins</th><th>Subis</th><th>Fin</th>
+        <th>Améliorations</th><th>Dash/Course/Bond</th><th>Capacités</th></tr>
+        ${rows}
+      </table></div>
+      <h3>Étages</h3>
+      <div class="report-scroll"><table>
+        <tr><th>Étage</th><th></th><th>Durée</th><th>Monstres</th><th>Dégâts</th><th>Subis</th>
+        <th>Morts</th><th>Repos</th></tr>
+        ${floors}
+      </table></div>`
+    this.reportPanel.hidden = false
   }
 
   // Le panneau équipe se reconstruit à chaque nouveau rejeu : la
@@ -179,13 +287,13 @@ export class HUD {
     ctx.fillText(`étage ${last.floors + 1}`, w - 52, 12)
   }
 
-  renderRecords(records, activeId) {
+  renderRecords(records, activeGeneration) {
     this.recordsList.innerHTML = ''
     records.forEach((rec) => {
       const li = document.createElement('li')
       const btn = document.createElement('button')
       btn.textContent = `Étage ${rec.floors + 1} — gén. ${rec.generation}`
-      if (rec.id === activeId) btn.classList.add('active')
+      if (rec.generation === activeGeneration) btn.classList.add('active')
       btn.addEventListener('click', () => this.onSelectRecord(rec))
       li.appendChild(btn)
       this.recordsList.appendChild(li)

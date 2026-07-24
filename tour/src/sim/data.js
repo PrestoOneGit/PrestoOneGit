@@ -100,6 +100,42 @@ export const CLASSES = [
   },
 ]
 
+// ---- Mobilité ----
+// Trois déplacements à cooldown, communs à toutes les classes. Le réseau
+// décide quand les déclencher ; la direction est celle qu'il demande déjà
+// pour son déplacement normal.
+
+export const MOBILITY = {
+  dash: { label: 'Dash', distance: 4.2, cd: 5, cost: 0 },
+  sprint: { label: 'Course', speedMult: 1.7, duration: 3, cd: 12, cost: 0 },
+  jump: { label: 'Bond', distance: 7, airTime: 0.45, cd: 10, cost: 0 },
+}
+
+// ---- Montée en niveau ----
+// Un niveau par étage franchi (gain passif), et un CHOIX d'amélioration
+// aux étages multiples de 5 : le réseau désigne laquelle il veut. Les
+// améliorations se cumulent — c'est la « build » de l'agent, apprise.
+
+export const UPGRADE_EVERY = 5
+
+export const UPGRADES = [
+  { id: 'vigueur', label: 'Vigueur', desc: '+18 % PV max' },
+  { id: 'puissance', label: 'Puissance', desc: '+15 % dégâts' },
+  { id: 'celerite', label: 'Célérité', desc: '+12 % vitesse, attaques plus rapides' },
+  { id: 'arcanes', label: 'Arcanes', desc: '+25 % mana et régénération' },
+  { id: 'amplification', label: 'Amplification', desc: '+20 % puissance des capacités' },
+  { id: 'resilience', label: 'Résilience', desc: '-15 % dégâts subis, afflictions écourtées' },
+]
+
+export const UPGRADE_EFFECTS = {
+  vigueur: { hp: 1.18 },
+  puissance: { dmg: 1.15 },
+  celerite: { speed: 1.12, haste: 0.9 },
+  arcanes: { mana: 1.25 },
+  amplification: { ability: 1.2 },
+  resilience: { armor: 0.85, afflictionDuration: 0.75 },
+}
+
 // ---- Bestiaire ----
 // ai : melee (fonce au contact) | ranged (garde ses distances) |
 //      healer (soigne le monstre le plus blessé) | boss
@@ -149,7 +185,7 @@ export function tierForFloor(floor) {
 // niveau automatique) ; les monstres grimpent un peu plus vite : le mur
 // arrive progressivement, et le repousser demande de mieux jouer.
 
-export const HERO_GROWTH = 1.04 // par étage franchi (PV, dégâts, mana)
+export const HERO_GROWTH = 1.035 // par niveau, soit par étage franchi
 export const MONSTER_GROWTH = 1.055 // par étage (PV, dégâts)
 export const FLOOR_BUDGET = (floor) => 8 + floor * 3 // points de monstres
 export const ELITE_FROM_FLOOR = 15

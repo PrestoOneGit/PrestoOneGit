@@ -10,9 +10,9 @@ const STONE_DARK = '#6e675c'
 // ne change RIEN à la vitesse d'apprentissage. Et sur les milliers de
 // runs simulés, un seul est rendu (le rejeu).
 export const QUALITY_LEVELS = [
-  { id: 'capsules', label: 'Capsules', shadows: false, lathe: false, emblems: false, hitFx: false },
-  { id: 'pions', label: 'Pions', shadows: true, lathe: true, emblems: true, hitFx: false },
-  { id: 'deluxe', label: 'Deluxe', shadows: true, lathe: true, emblems: true, hitFx: true },
+  { id: 'capsules', label: 'Capsules', shadows: false, lathe: false, emblems: false, hitFx: false, seals: false },
+  { id: 'pions', label: 'Pions', shadows: true, lathe: true, emblems: true, hitFx: false, seals: true },
+  { id: 'deluxe', label: 'Deluxe', shadows: true, lathe: true, emblems: true, hitFx: true, seals: true },
 ]
 
 // Profil tourné d'une pièce de jeu (socle, fût, collerette, tête).
@@ -406,6 +406,44 @@ export class Tower3D {
     return [offX, offZ]
   }
 
+  // Sceau magique : deux anneaux concentriques, des marques radiales et
+  // des glyphes — un cercle d'invocation qui se déploie au sol.
+  makeSeal(radius, color) {
+    const g = new THREE.Group()
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
+    g.userData.materials = [mat]
+
+    const outer = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 3, 40), mat)
+    outer.rotation.x = -Math.PI / 2
+    const inner = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.022, 3, 32), mat)
+    inner.rotation.x = -Math.PI / 2
+    g.add(outer, inner)
+
+    // Marques radiales entre les deux anneaux
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      const tick = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.05), mat)
+      tick.position.set(Math.cos(a) * 0.81, 0, Math.sin(a) * 0.81)
+      tick.rotation.y = -a
+      g.add(tick)
+    }
+    // Glyphes sur l'anneau extérieur
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.3
+      const glyph = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.02, 0.09), mat)
+      glyph.position.set(Math.cos(a) * 1.0, 0, Math.sin(a) * 1.0)
+      glyph.rotation.y = a
+      g.add(glyph)
+    }
+    // Triangle central
+    const tri = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.02, 3, 3), mat)
+    tri.rotation.x = -Math.PI / 2
+    g.add(tri)
+
+    g.scale.setScalar(radius)
+    return g
+  }
+
   spawnVfx(kind, from, to, { radius = 1, color = '#fff4dd' } = {}) {
     let mesh
     let life = 0.3
@@ -416,6 +454,15 @@ export class Tower3D {
     } else if (kind === 'cast' || kind === 'drain') {
       mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.15, 0), new THREE.MeshBasicMaterial({ color }))
       life = 0.22
+    } else if (kind === 'seal') {
+      mesh = this.makeSeal(radius, color)
+      life = 0.85
+    } else if (kind === 'dashTrail') {
+      mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.06, 0.5),
+        new THREE.MeshBasicMaterial({ color, transparent: true })
+      )
+      life = 0.35
     } else if (kind === 'aoe' || kind === 'taunt' || kind === 'slam') {
       mesh = new THREE.Mesh(
         new THREE.TorusGeometry(0.4, 0.07, 4, seg),
@@ -446,7 +493,7 @@ export class Tower3D {
       )
       life = 0.15
     }
-    const grounded = kind === 'aoe' || kind === 'taunt' || kind === 'slam'
+    const grounded = kind === 'aoe' || kind === 'taunt' || kind === 'slam' || kind === 'seal' || kind === 'dashTrail'
     mesh.position.set(from[0], grounded ? 0.12 : 0.9, from[1])
     this.group.add(mesh)
     this.vfx.push({ mesh, kind, life, maxLife: life, from, to, radius })
@@ -508,7 +555,9 @@ export class Tower3D {
       } else {
         mesh.rotation.z = hero.aff.stun > 0 ? Math.sin(elapsed * 30) * 0.15 : 0
         mat.opacity = 1
-        mesh.position.y = Math.abs(Math.sin(elapsed * 8 + i)) * (q.lathe ? 0.04 : 0.06)
+        // En plein bond, l'agent décolle réellement du sol.
+        mesh.position.y =
+          (hero.jumpHeight ?? 0) + Math.abs(Math.sin(elapsed * 8 + i)) * (q.lathe ? 0.04 : 0.06)
         // Le pion s'oriente vers le monstre le plus proche
         if (q.lathe && this.run.monsters.length > 0) {
           let bx = 0
@@ -531,12 +580,24 @@ export class Tower3D {
       if (ev.t === 'arrow') this.spawnVfx('arrow', ev.from, ev.to)
       else if (ev.t === 'cast') this.spawnVfx('cast', ev.from, ev.to, { color: ev.color })
       else if (ev.t === 'drain') this.spawnVfx('drain', ev.from, ev.to, { color: '#7a5f9e' })
-      else if (ev.t === 'aoe') this.spawnVfx('aoe', ev.at, ev.at, { radius: ev.r, color: ev.color })
-      else if (ev.t === 'taunt') this.spawnVfx('taunt', ev.at, ev.at, { radius: ev.r })
+      else if (ev.t === 'aoe') {
+        this.spawnVfx('aoe', ev.at, ev.at, { radius: ev.r, color: ev.color })
+        // Les capacités de zone posent en plus un sceau runique au sol.
+        if (ev.seal && q.seals) this.spawnVfx('seal', ev.at, ev.at, { radius: ev.r, color: ev.color })
+      } else if (ev.t === 'taunt') this.spawnVfx('taunt', ev.at, ev.at, { radius: ev.r })
       else if (ev.t === 'slam') this.spawnVfx('slam', ev.at, ev.at, { radius: ev.r })
       else if (ev.t === 'heal') this.spawnVfx('heal', ev.to, ev.to)
-      else if (ev.t === 'buff') this.spawnVfx('buff', ev.to, ev.to, { color: ev.color })
-      else if (ev.t === 'monsterDie') this.spawnVfx('die', ev.at, ev.at)
+      else if (ev.t === 'buff') {
+        this.spawnVfx('buff', ev.to, ev.to, { color: ev.color })
+        if (q.seals) this.spawnVfx('seal', ev.to, ev.to, { radius: 1.1, color: ev.color })
+      } else if (ev.t === 'upgrade' && q.seals) {
+        const h = this.run.heroes[ev.slot]
+        this.spawnVfx('seal', [h.x, h.z], [h.x, h.z], { radius: 1.3, color: '#e8c96a' })
+      } else if (ev.t === 'dash') {
+        this.spawnVfx('dashTrail', ev.from, ev.to, { color: this.run.heroes[ev.slot]?.cls.color ?? '#fff' })
+      } else if (ev.t === 'jump') {
+        this.spawnVfx('dashTrail', ev.from, ev.from, { color: '#e8dcc0' })
+      } else if (ev.t === 'monsterDie') this.spawnVfx('die', ev.at, ev.at)
       else if (ev.t === 'slash' || ev.t === 'bite') this.spawnVfx(ev.t, ev.to, ev.to)
     }
 
@@ -554,6 +615,19 @@ export class Tower3D {
           v.mesh.lookAt(v.to[0], 0.9, v.to[1])
           v.mesh.rotateX(Math.PI / 2)
         }
+      } else if (v.kind === 'seal') {
+        // Le sceau se déploie puis tourne en s'effaçant
+        const grow = Math.min(1, p * 4)
+        v.mesh.scale.setScalar(v.radius * (0.2 + grow * 0.8))
+        v.mesh.rotation.y = p * 1.2
+        for (const mat of v.mesh.userData.materials) mat.opacity = 0.85 * (1 - p * p)
+      } else if (v.kind === 'dashTrail') {
+        v.mesh.position.set(
+          v.from[0] + (v.to[0] - v.from[0]) * p,
+          0.12,
+          v.from[1] + (v.to[1] - v.from[1]) * p
+        )
+        v.mesh.material.opacity = 0.55 * (1 - p)
       } else if (v.kind === 'aoe' || v.kind === 'taunt' || v.kind === 'slam') {
         const s = 0.4 + p * v.radius * 2.2
         v.mesh.scale.set(s, s, 1)
@@ -569,8 +643,11 @@ export class Tower3D {
       }
       if (v.life <= 0) {
         this.group.remove(v.mesh)
-        v.mesh.geometry.dispose()
-        v.mesh.material.dispose()
+        // Un sceau est un groupe de plusieurs meshes, pas un mesh unique.
+        v.mesh.traverse((o) => {
+          if (o.geometry) o.geometry.dispose()
+          if (o.material?.dispose) o.material.dispose()
+        })
         this.vfx.splice(i, 1)
       }
     }

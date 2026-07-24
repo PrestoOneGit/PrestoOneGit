@@ -36,15 +36,56 @@ npm run build:single   # produit dist-single/index.html, autonome
   partielle, 3 repos complets par run — le moment de se reposer est VOTÉ
   par les réseaux (une sortie dédiée), pas décidé par une règle.
 
+## Mobilité et progression
+
+- **Trois déplacements à cooldown**, communs à toutes les classes :
+  **dash** (repositionnement instantané, 5 s), **course** (+70 % de vitesse
+  pendant 3 s, 12 s), **bond** (saut de 7 unités qui **esquive la mêlée**
+  pendant le vol, 10 s). Le réseau décide quand les déclencher.
+- **Un niveau par étage franchi**, et tous les 5 étages **un choix
+  d'amélioration** parmi 6 (Vigueur, Puissance, Célérité, Arcanes,
+  Amplification, Résilience) — le réseau désigne laquelle. Les rangs se
+  cumulent : c'est la « build » de l'agent, et elle est apprise.
+
 ## L'apprentissage (zéro heuristique)
 
-- MLP 55 → 24 → 9 par aventurier : observations brutes (soi, 4 monstres
-  proches, 4 alliés, étage, repos restants) → déplacement, choix d'action
-  parmi les 4 disponibles, ciblage, envie de repos.
+- MLP 66 → 28 → 18 par agent : observations brutes (soi, cooldowns de
+  mobilité, améliorations possédées, 4 monstres proches, 4 alliés, étage,
+  repos restants) → déplacement, mobilité, choix d'action parmi les 4
+  disponibles, ciblage, envie de repos, préférence d'amélioration.
 - Neuro-évolution : 32 équipes/génération dans des Web Workers, croisement
-  par aventuriers entiers (classe + cerveau), mutation auto-adaptative,
+  par agents entiers (classe + cerveau), mutation auto-adaptative,
   mutation de classe rare (3 %) qui explore la méta.
 - Fitness = étages franchis (x1000) + progression de l'étage courant.
+
+## Persistance
+
+L'entraînement **survit à un rechargement**. La population, l'historique et
+les runs records sont écrits dans IndexedDB toutes les 10 générations, à la
+mise en pause et à la fermeture de l'onglet ; au démarrage, la session est
+reprise là où elle s'était arrêtée. Le menu **Session** permet aussi de
+sauvegarder à la demande, d'**exporter la session en `.json`** (pour la
+transporter entre machines, ou récupérer un entraînement lancé sur GPU
+loué), d'en **importer** une, ou d'effacer la sauvegarde.
+
+Les sauvegardes portent un numéro de format : si les règles ou la taille des
+réseaux changent, une vieille session est ignorée avec un message clair
+plutôt que reprise avec des agents incohérents.
+
+## Rapports de run (lisibles par un LLM)
+
+Le bouton **Rapport** rejoue le run affiché en mode journalisé et produit :
+
+- **par agent** : classe, niveau, dégâts, soins, dégâts subis, étage de mort,
+  améliorations choisies, usage de chaque capacité, compte de dash/course/bond ;
+- **par étage** : durée, composition exacte des monstres, dégâts échangés,
+  morts, repos pris, améliorations distribuées ;
+- une **chronologie** horodatée (début d'étage, mort d'agent, repos, choix
+  d'amélioration, fin de run).
+
+« Copier pour un LLM » met un résumé markdown compact dans le presse-papier,
+« Exporter JSON » télécharge le rapport complet. Depuis la console :
+`tour.report(130)` et `tour.markdown(130)`.
 
 ## Ce qu'on observe (mesuré)
 
@@ -62,6 +103,11 @@ de boss), ambiance du plateau qui change avec les paliers, mur des ascensions
 parallèles (une par worker), courbe de l'étage record, rejeux cliquables des
 40 derniers records, contrôles pause/x1/x2/x4.
 
+**Rejouer n'importe quelle génération** : le champion de *chaque* génération
+est archivé (400 dernières, plus tous les records, jamais évincés). Le champ
+« gén. » du panneau Rejeux rejoue celle qu'on veut — pas seulement celles qui
+ont battu un record. Depuis la console : `tour.playGeneration(130)`.
+
 ### Niveaux de détail (bouton Capsules / Pions / Deluxe)
 
 Comme un réglage graphique de jeu : on remplace les modèles et les effets
@@ -70,8 +116,16 @@ du rejeu, sans toucher au reste.
 | Niveau | Modèles | Ombres | Effets |
 |---|---|---|---|
 | **Capsules** | capsules colorées | non | projectiles et zones |
-| **Pions** (défaut) | pièces tournées façon jeu d'échecs, emblème par classe (couronne, cornes, arc, chapeau, auréole, orbe) | oui | idem |
+| **Pions** (défaut) | pièces tournées façon jeu d'échecs, emblème par classe (couronne, cornes, arc, chapeau, auréole, orbe) | oui | + **sceaux magiques** (cercles runiques au sol pour les zones, buffs et montées en niveau), traînées de dash, arcs de bond |
 | **Deluxe** | pions + matériaux plus riches | oui | + fentes à l'attaque, flashs d'impact, pop des cibles touchées |
+
+**Vrais modèles 3D** : le rendu est le seul endroit qui touche à la
+géométrie (`view/tower3d.js`, méthodes `makeHeroMesh` / `makeMonsterMesh`),
+donc brancher des `.glb` chargés par `GLTFLoader` ne demande de toucher à
+rien d'autre. Seule contrainte : le build « un seul fichier » ne peut pas
+embarquer des binaires lourds — avec de vrais modèles il faut servir le
+dossier `dist/` normalement (`npm run build` + un serveur statique) plutôt
+que `build:single`.
 
 **Le rendu ne ralentit pas l'apprentissage.** L'évolution tourne dans les Web
 Workers (autres cœurs CPU), le rendu sur le fil principal + GPU, et sur les

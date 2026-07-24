@@ -10,21 +10,33 @@ const POP_SIZE = 32
 const ELITES = 4
 const FRESH = 2
 const SEEDS_PER_EVAL = 2
+const ARCHIVE_LIMIT = 400 // champions conservés en mémoire, pour rejouer
+const RECORD_LIMIT = 60 // records conservés et sauvegardés
+export const AUTOSAVE_EVERY = 10
 
 // Source unique pour le nombre de workers : le HUD s'aligne dessus.
 export const WORKER_COUNT = Math.min(11, Math.max(2, (navigator.hardwareConcurrency || 4) - 1))
 
 export class Evolution {
-  constructor({ onSnapshot, onGeneration, onNewBest }) {
+  constructor({ onSnapshot, onGeneration, onNewBest, onAutosave, resumeFrom = null }) {
     this.rng = mulberry32((Math.random() * 2 ** 31) | 0)
     this.onSnapshot = onSnapshot
     this.onGeneration = onGeneration
     this.onNewBest = onNewBest
+    this.onAutosave = onAutosave
 
-    this.generation = 0
-    this.population = Array.from({ length: POP_SIZE }, () => randomTeamGenome(this.rng))
-    this.history = [] // {gen, best, mean, floors}
-    this.bestEver = null // {genome, fitness, floors, generation, seed}
+    this.generation = resumeFrom?.generation ?? 0
+    this.population =
+      resumeFrom?.population ?? Array.from({ length: POP_SIZE }, () => randomTeamGenome(this.rng))
+    this.history = resumeFrom?.history ?? [] // {gen, best, mean, floors}
+    this.records = resumeFrom?.records ?? [] // runs record, du plus récent au plus ancien
+    this.bestEver = resumeFrom?.bestEver ?? null
+    this.resumed = !!resumeFrom
+    // Champion de CHAQUE génération, pour pouvoir rejouer n'importe
+    // laquelle — pas seulement celles qui ont battu un record.
+    this.archive = new Map()
+    for (const r of this.records) this.archive.set(r.generation, r)
+
     this.running = false
     this.paused = false
 
@@ -38,6 +50,17 @@ export class Evolution {
 
   get workerCount() {
     return this.workers.length
+  }
+
+  // État sérialisable : ce qui part en sauvegarde et en export.
+  snapshotState() {
+    return {
+      generation: this.generation,
+      population: this.population,
+      history: this.history,
+      records: this.records,
+      bestEver: this.bestEver,
+    }
   }
 
   handleMessage(msg) {
@@ -88,6 +111,19 @@ export class Evolution {
     return best.genome
   }
 
+  trimArchive() {
+    if (this.archive.size <= ARCHIVE_LIMIT) return
+    const recordGens = new Set(this.records.map((r) => r.generation))
+    // On sacrifie les plus anciennes générations ordinaires ; les runs
+    // records sont conservés quoi qu'il arrive.
+    const gens = [...this.archive.keys()].sort((a, b) => a - b)
+    for (const gen of gens) {
+      if (this.archive.size <= ARCHIVE_LIMIT) break
+      if (recordGens.has(gen)) continue
+      this.archive.delete(gen)
+    }
+  }
+
   async runGeneration() {
     const results = await this.evaluate()
     const scored = this.population.map((genome, i) => ({
@@ -101,16 +137,23 @@ export class Evolution {
     const mean = scored.reduce((s, x) => s + x.fitness, 0) / scored.length
     this.history.push({ gen: this.generation, best: best.fitness, mean, floors: best.floors })
 
-    if (!this.bestEver || best.fitness > this.bestEver.fitness) {
+    const entry = {
+      generation: this.generation,
+      genome: best.genome.slice(),
+      seed: this.seedsForGeneration()[0],
+      fitness: best.fitness,
+      floors: best.floors,
+    }
+    this.archive.set(this.generation, entry)
+    this.trimArchive()
+
+    const isRecord = !this.bestEver || best.fitness > this.bestEver.fitness
+    if (isRecord) {
       const previous = this.bestEver
-      this.bestEver = {
-        genome: best.genome.slice(),
-        fitness: best.fitness,
-        floors: best.floors,
-        generation: this.generation,
-        seed: this.seedsForGeneration()[0],
-      }
-      this.onNewBest?.(this.bestEver, previous)
+      this.bestEver = entry
+      this.records.unshift(entry)
+      if (this.records.length > RECORD_LIMIT) this.records.pop()
+      this.onNewBest?.(entry, previous)
     }
     this.onGeneration?.(this.generation, best.fitness, mean, this.bestEver)
 
@@ -123,6 +166,17 @@ export class Evolution {
     }
     this.population = next
     this.generation++
+
+    if (this.generation % AUTOSAVE_EVERY === 0) this.onAutosave?.()
+  }
+
+  // Champion d'une génération donnée, s'il est encore en mémoire.
+  championOf(generation) {
+    return this.archive.get(generation) ?? null
+  }
+
+  archivedGenerations() {
+    return [...this.archive.keys()].sort((a, b) => b - a)
   }
 
   async start() {

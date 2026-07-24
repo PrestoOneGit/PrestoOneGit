@@ -1,21 +1,25 @@
-// Moteur de run : une équipe de 5 aventuriers grimpe la tour étage par
-// étage jusqu'à la mort (ou le cap). Pur JS, déterministe à graine et
-// génome égaux, sans dépendance — le même code tourne dans les Web
-// Workers (évaluation accélérée) et dans le fil principal (visionneuse).
+// Moteur de run : une équipe de 5 agents grimpe la tour étage par étage
+// jusqu'à la mort (ou le cap). Pur JS, déterministe à graine et génome
+// égaux, sans dépendance — le même code tourne dans les Web Workers
+// (évaluation accélérée) et dans le fil principal (visionneuse).
 //
-// Les héros n'ont AUCUN comportement écrit à la main : leurs réseaux
-// (brain.js) décident de tout. Le moteur n'applique que les règles
-// (data.js) : portées, coûts, afflictions, scaling, monstres.
+// Les agents n'ont AUCUN comportement écrit à la main : leurs réseaux
+// (brain.js) décident de tout, jusqu'au choix de leurs améliorations.
+// Le moteur n'applique que les règles (data.js).
 
 import {
   AFFLICTION_DURATIONS, BLESS_DURATION, BLESS_FACTOR, BOSSES, BURN_DPS,
   CLASSES, ELITE_CHANCE, ELITE_FROM_FLOOR, ELITE_MULT, FLOOR_BUDGET,
-  FLOOR_TIME_LIMIT, HERO_GROWTH, MAX_FLOOR, MONSTERS, MONSTER_GROWTH,
-  POISON_DPS_PER_STACK, POISON_MAX_STACKS, REGEN_BETWEEN_FLOORS,
-  RESTS_PER_RUN, SLOW_FACTOR, STANCE_DURATION, STANCE_FACTOR, TIERS,
-  VULN_FACTOR, tierForFloor,
+  FLOOR_TIME_LIMIT, HERO_GROWTH, MAX_FLOOR, MOBILITY, MONSTERS,
+  MONSTER_GROWTH, POISON_DPS_PER_STACK, POISON_MAX_STACKS,
+  REGEN_BETWEEN_FLOORS, RESTS_PER_RUN, SLOW_FACTOR, STANCE_DURATION,
+  STANCE_FACTOR, UPGRADES, UPGRADE_EFFECTS, UPGRADE_EVERY, VULN_FACTOR,
+  tierForFloor,
 } from './data.js'
-import { INPUT_SIZE, OUTPUT_SIZE, SLOTS, forward, slotClass } from './brain.js'
+import {
+  INPUT_SIZE, OUTPUT_SIZE, OUT_ABILITY, OUT_BASIC, OUT_GATE, OUT_MOBILITY,
+  OUT_REST, OUT_TARGET_PREF, OUT_UPGRADE, SLOTS, forward, slotClass,
+} from './brain.js'
 
 export const ARENA_RADIUS = 14
 export const TICK = 0.1
@@ -40,46 +44,77 @@ function freshAfflictions() {
   return { burn: 0, poison: 0, poisonStacks: 0, slow: 0, stun: 0, vuln: 0 }
 }
 
+// Multiplicateurs dérivés des améliorations accumulées.
+function upgradeMultipliers(counts) {
+  const m = { hp: 1, dmg: 1, speed: 1, haste: 1, mana: 1, ability: 1, armor: 1, afflictionDuration: 1 }
+  UPGRADES.forEach((up, i) => {
+    const n = counts[i]
+    if (n === 0) return
+    const fx = UPGRADE_EFFECTS[up.id]
+    for (const [key, value] of Object.entries(fx)) m[key] *= Math.pow(value, n)
+  })
+  return m
+}
+
 export class TowerRun {
-  constructor(genome, seed) {
+  // `logging` active la collecte détaillée pour les rapports. Désactivé
+  // par défaut : les workers d'évaluation ne paient pas ce coût.
+  constructor(genome, seed, { logging = false } = {}) {
     this.genome = genome
+    this.seed = seed
     this.rng = mulberry32(seed)
+    this.logging = logging
     this.time = 0
     this.floor = 0
     this.floorTime = 0
     this.floorsCleared = 0
     this.restsLeft = RESTS_PER_RUN
-    this.betweenFloors = 0 // compte à rebours avant l'étage suivant
+    this.betweenFloors = 0
     this.events = []
     this.monsters = []
     this.nextMonsterId = 1
     this.over = false
     this.endReason = null
+    this.timeline = []
+    this.floorLog = []
+    this.currentFloorLog = null
 
     this.heroes = Array.from({ length: SLOTS }, (_, s) => {
       const cls = slotClass(genome, s)
       const a = (s / SLOTS) * Math.PI * 2
-      return {
+      const hero = {
         slot: s,
         cls,
         classIndex: CLASSES.indexOf(cls),
         x: Math.cos(a) * 3,
         z: Math.sin(a) * 3,
-        hp: cls.hp,
+        level: 0,
+        upgrades: new Array(UPGRADES.length).fill(0),
+        upMult: upgradeMultipliers(new Array(UPGRADES.length).fill(0)),
         maxHp: cls.hp,
-        mana: cls.mana,
         maxMana: cls.mana,
-        dmgMult: 1, // croît à chaque étage franchi
+        hp: cls.hp,
+        mana: cls.mana,
+        dmgMult: 1,
         cdBasic: 0,
         cds: [0, 0, 0],
+        mobilityCds: { dash: 0, sprint: 0, jump: 0 },
+        sprintLeft: 0,
+        airborne: 0,
+        jumpFrom: null,
+        jumpTo: null,
         alive: true,
         aff: freshAfflictions(),
         bless: 0,
         stance: 0,
         damage: 0,
         healing: 0,
+        damageTaken: 0,
         lastRestWish: 0,
+        // Statistiques de run (toujours comptées : c'est bon marché)
+        stats: { abilities: [0, 0, 0], basic: 0, dash: 0, sprint: 0, jump: 0, deathFloor: null },
       }
+      return hero
     })
 
     this.startFloor(1)
@@ -103,6 +138,11 @@ export class TowerRun {
       max += m.maxHp
     }
     return max > 0 ? 1 - hp / max : 0
+  }
+
+  mark(type, data = {}) {
+    if (!this.logging) return
+    this.timeline.push({ t: Number(this.time.toFixed(1)), floor: this.floor, type, ...data })
   }
 
   // ---- Étages ----
@@ -143,8 +183,12 @@ export class TowerRun {
       slam,
       cd: 0.8 + this.rng() * 0.8,
       aff: freshAfflictions(),
-      taunt: null, // {hero, t}
+      taunt: null,
     })
+    if (this.currentFloorLog) {
+      const key = boss ? `${type} (boss)` : elite ? `${type} (élite)` : type
+      this.currentFloorLog.monsters[key] = (this.currentFloorLog.monsters[key] ?? 0) + 1
+    }
   }
 
   startFloor(floor) {
@@ -152,11 +196,24 @@ export class TowerRun {
     this.floorTime = 0
     this.monsters = []
     const tier = tierForFloor(floor)
+    const isBoss = floor % 10 === 0
+    if (this.logging) {
+      this.currentFloorLog = {
+        floor,
+        boss: isBoss,
+        monsters: {},
+        duration: 0,
+        damageDealt: 0,
+        damageTaken: 0,
+        deaths: [],
+        restTaken: false,
+        upgrades: [],
+      }
+    }
     const scale = {
       hp: Math.pow(MONSTER_GROWTH, floor - 1),
       dmg: Math.pow(MONSTER_GROWTH, floor - 1),
     }
-    const isBoss = floor % 10 === 0
     let budget = FLOOR_BUDGET(floor)
     if (isBoss) {
       const boss = BOSSES[tier.boss]
@@ -173,39 +230,87 @@ export class TowerRun {
       budget -= cost
     }
     this.events.push({ t: 'floor', floor, boss: isBoss })
+    this.mark('floorStart', { boss: isBoss })
+  }
+
+  // Recalcule les stats dérivées : niveau × améliorations. Recalcul
+  // complet (pas incrémental) pour rester exactement déterministe.
+  recomputeStats(hero, { healToFull = false } = {}) {
+    const hpRatio = hero.maxHp > 0 ? hero.hp / hero.maxHp : 1
+    const manaRatio = hero.maxMana > 0 ? hero.mana / hero.maxMana : 1
+    const lvl = Math.pow(HERO_GROWTH, hero.level)
+    const u = hero.upMult
+    hero.maxHp = hero.cls.hp * lvl * u.hp
+    hero.maxMana = hero.cls.mana * lvl * u.mana
+    hero.dmgMult = lvl * u.dmg
+    hero.hp = healToFull ? hero.maxHp : hero.maxHp * hpRatio
+    hero.mana = healToFull ? hero.maxMana : hero.maxMana * manaRatio
+  }
+
+  chooseUpgrade(hero) {
+    // Le réseau désigne l'amélioration qu'il veut : argmax des 6 sorties
+    // dédiées. Aucune règle ne dit « le tank prend Vigueur ».
+    const out = forward(this.genome, hero.slot, this.buildObservation(hero), act)
+    let best = 0
+    let bestScore = -Infinity
+    for (let i = 0; i < UPGRADES.length; i++) {
+      if (out[OUT_UPGRADE + i] > bestScore) {
+        bestScore = out[OUT_UPGRADE + i]
+        best = i
+      }
+    }
+    hero.upgrades[best]++
+    hero.upMult = upgradeMultipliers(hero.upgrades)
+    this.recomputeStats(hero)
+    if (this.currentFloorLog) {
+      this.currentFloorLog.upgrades.push({ agent: hero.cls.label, slot: hero.slot, upgrade: UPGRADES[best].id })
+    }
+    this.mark('upgrade', { agent: hero.cls.label, slot: hero.slot, upgrade: UPGRADES[best].id })
+    this.events.push({ t: 'upgrade', slot: hero.slot, upgrade: UPGRADES[best].id })
   }
 
   clearFloor() {
     this.floorsCleared++
-    const heroes = this.heroes.filter((h) => h.alive)
+    const survivors = this.heroes.filter((h) => h.alive)
 
     // Vote de repos : la moyenne des sorties « envie de repos » des
-    // survivants décide (aucune règle codée en dur sur QUAND se reposer).
-    const wish = heroes.reduce((s, h) => s + h.lastRestWish, 0) / Math.max(heroes.length, 1)
+    // survivants décide (aucune règle codée sur QUAND se reposer).
+    const wish = survivors.reduce((s, h) => s + h.lastRestWish, 0) / Math.max(survivors.length, 1)
     const rest = wish > 0.55 && this.restsLeft > 0
+    const levelUpChoice = this.floor % UPGRADE_EVERY === 0
 
-    for (const h of this.heroes) {
-      if (!h.alive) continue
-      // Montée en puissance par étage franchi
-      h.maxHp *= HERO_GROWTH
-      h.maxMana *= HERO_GROWTH
-      h.dmgMult *= HERO_GROWTH
+    for (const hero of survivors) {
+      hero.level++
+      this.recomputeStats(hero)
       if (rest) {
-        h.hp = h.maxHp
-        h.mana = h.maxMana
+        hero.hp = hero.maxHp
+        hero.mana = hero.maxMana
       } else {
-        h.hp = Math.min(h.maxHp, h.hp + (h.maxHp - h.hp) * REGEN_BETWEEN_FLOORS.hp)
-        h.mana = Math.min(h.maxMana, h.mana + (h.maxMana - h.mana) * REGEN_BETWEEN_FLOORS.mana)
+        hero.hp = Math.min(hero.maxHp, hero.hp + (hero.maxHp - hero.hp) * REGEN_BETWEEN_FLOORS.hp)
+        hero.mana = Math.min(hero.maxMana, hero.mana + (hero.maxMana - hero.mana) * REGEN_BETWEEN_FLOORS.mana)
       }
-      h.aff = freshAfflictions()
-      h.bless = 0
-      h.stance = 0
-      h.cds = [0, 0, 0]
-      h.cdBasic = 0
+      hero.aff = freshAfflictions()
+      hero.bless = 0
+      hero.stance = 0
+      hero.cds = [0, 0, 0]
+      hero.cdBasic = 0
+      hero.mobilityCds = { dash: 0, sprint: 0, jump: 0 }
+      hero.sprintLeft = 0
+      hero.airborne = 0
+      if (levelUpChoice) this.chooseUpgrade(hero)
     }
+
     if (rest) {
       this.restsLeft--
       this.events.push({ t: 'rest', restsLeft: this.restsLeft })
+      this.mark('rest', { restsLeft: this.restsLeft })
+    }
+    if (this.currentFloorLog) {
+      this.currentFloorLog.duration = Number(this.floorTime.toFixed(1))
+      this.currentFloorLog.restTaken = rest
+      this.currentFloorLog.survivors = survivors.length
+      this.floorLog.push(this.currentFloorLog)
+      this.currentFloorLog = null
     }
     this.events.push({ t: 'floorClear', floor: this.floor })
     this.betweenFloors = 1.2
@@ -214,12 +319,20 @@ export class TowerRun {
   end(reason) {
     this.over = true
     this.endReason = reason
+    if (this.currentFloorLog) {
+      this.currentFloorLog.duration = Number(this.floorTime.toFixed(1))
+      this.currentFloorLog.failed = true
+      this.floorLog.push(this.currentFloorLog)
+      this.currentFloorLog = null
+    }
+    this.mark('runEnd', { reason })
   }
 
   // ---- Dégâts, soins, afflictions ----
 
-  heroOutgoing(hero, base) {
+  heroOutgoing(hero, base, isAbility = false) {
     let dmg = base * hero.dmgMult
+    if (isAbility) dmg *= hero.upMult.ability
     if (hero.bless > 0) dmg *= BLESS_FACTOR
     // Passif berserker : +40 % de dégâts sous 35 % de PV
     if (hero.cls.id === 'berserker' && hero.hp / hero.maxHp < 0.35) dmg *= 1.4
@@ -232,28 +345,43 @@ export class TowerRun {
     if (monster.stats.armor) dmg *= 1 - monster.stats.armor
     monster.hp -= dmg
     hero.damage += dmg
+    if (this.currentFloorLog) this.currentFloorLog.damageDealt += dmg
   }
 
   damageHero(monster, hero, amount) {
+    // Un agent en l'air esquive les attaques de mêlée.
+    if (hero.airborne > 0 && monster && monster.stats.range < 3) {
+      this.events.push({ t: 'dodge', at: [hero.x, hero.z] })
+      return
+    }
     let dmg = amount
     if (hero.aff.vuln > 0) dmg *= VULN_FACTOR
     if (hero.stance > 0 && !monster?.stats?.pierceArmor) dmg *= STANCE_FACTOR
+    dmg *= hero.upMult.armor
     hero.hp -= dmg
+    hero.damageTaken += dmg
+    if (this.currentFloorLog) this.currentFloorLog.damageTaken += dmg
     if (hero.hp <= 0) {
       hero.hp = 0
       hero.alive = false
+      hero.stats.deathFloor = this.floor
       this.events.push({ t: 'heroDown', slot: hero.slot, at: [hero.x, hero.z] })
+      if (this.currentFloorLog) {
+        this.currentFloorLog.deaths.push({ agent: hero.cls.label, slot: hero.slot })
+      }
+      this.mark('agentDown', { agent: hero.cls.label, slot: hero.slot })
     }
   }
 
   applyAfflictions(target, applies) {
     if (!applies) return
+    const scale = target.upMult ? target.upMult.afflictionDuration : 1
     for (const [name, stacks] of Object.entries(applies)) {
       if (name === 'poison') {
         target.aff.poisonStacks = Math.min(POISON_MAX_STACKS, target.aff.poisonStacks + stacks)
-        target.aff.poison = AFFLICTION_DURATIONS.poison
+        target.aff.poison = AFFLICTION_DURATIONS.poison * scale
       } else {
-        target.aff[name] = AFFLICTION_DURATIONS[name]
+        target.aff[name] = AFFLICTION_DURATIONS[name] * scale
       }
     }
   }
@@ -265,10 +393,18 @@ export class TowerRun {
     if (a.poison > 0) dot += POISON_DPS_PER_STACK * a.poisonStacks * dt
     if (dot > 0) {
       entity.hp -= dot
-      if (entity.hp <= 0 && isHero && entity.alive) {
-        entity.hp = 0
-        entity.alive = false
-        this.events.push({ t: 'heroDown', slot: entity.slot, at: [entity.x, entity.z] })
+      if (isHero) {
+        entity.damageTaken += dot
+        if (entity.hp <= 0 && entity.alive) {
+          entity.hp = 0
+          entity.alive = false
+          entity.stats.deathFloor = this.floor
+          this.events.push({ t: 'heroDown', slot: entity.slot, at: [entity.x, entity.z] })
+          if (this.currentFloorLog) {
+            this.currentFloorLog.deaths.push({ agent: entity.cls.label, slot: entity.slot, cause: 'affliction' })
+          }
+          this.mark('agentDown', { agent: entity.cls.label, slot: entity.slot, cause: 'affliction' })
+        }
       }
     }
     a.burn = Math.max(0, a.burn - dt)
@@ -297,8 +433,15 @@ export class TowerRun {
     obs[k++] = Math.min((hero.aff.burn + hero.aff.poisonStacks) / 8, 1)
     obs[k++] = hero.x / R
     obs[k++] = hero.z / R
+    // Mobilité
+    obs[k++] = hero.mobilityCds.dash <= 0 ? 1 : 0
+    obs[k++] = hero.mobilityCds.sprint <= 0 ? 1 : 0
+    obs[k++] = hero.mobilityCds.jump <= 0 ? 1 : 0
+    obs[k++] = hero.airborne > 0 ? 1 : 0
+    obs[k++] = hero.sprintLeft > 0 ? 1 : 0
+    // Améliorations accumulées
+    for (let i = 0; i < UPGRADES.length; i++) obs[k++] = Math.min(hero.upgrades[i] / 4, 1)
 
-    // 4 monstres les plus proches
     const sorted = this.monsters
       .map((m) => ({ m, d: (m.x - hero.x) ** 2 + (m.z - hero.z) ** 2 }))
       .sort((a, b) => a.d - b.d)
@@ -308,7 +451,7 @@ export class TowerRun {
         obs[k++] = (e.m.x - hero.x) / R
         obs[k++] = (e.m.z - hero.z) / R
         obs[k++] = e.m.hp / e.m.maxHp
-        obs[k++] = Math.min(e.m.dmg / hero.maxHp * 8, 1)
+        obs[k++] = Math.min((e.m.dmg / hero.maxHp) * 8, 1)
         obs[k++] = e.m.boss ? 1 : e.m.elite ? 0.5 : 0
       } else {
         obs[k++] = 0
@@ -319,7 +462,6 @@ export class TowerRun {
       }
     }
 
-    // 4 alliés (ordre des slots, en sautant soi-même)
     for (let s = 0; s < SLOTS; s++) {
       if (s === hero.slot) continue
       const h = this.heroes[s]
@@ -345,7 +487,7 @@ export class TowerRun {
     return obs
   }
 
-  // ---- Ciblage générique : pref 0 = au plus proche, 1 = au plus faible ----
+  // ---- Ciblage : pref 0 = au plus proche, 1 = au plus faible ----
 
   pickMonster(hero, range, pref) {
     let best = null
@@ -379,39 +521,102 @@ export class TowerRun {
     return best
   }
 
-  // ---- Un pas pour un héros ----
-
-  stepHero(hero, dt) {
-    if (!hero.alive) return
-    this.tickAfflictions(hero, dt, true)
-    if (!hero.alive) return
-    hero.cdBasic -= dt
-    for (let i = 0; i < 3; i++) hero.cds[i] -= dt
-    hero.bless = Math.max(0, hero.bless - dt)
-    hero.stance = Math.max(0, hero.stance - dt)
-    hero.mana = Math.min(hero.maxMana, hero.mana + hero.cls.manaRegen * dt)
-    if (hero.aff.stun > 0) return
-
-    const out = forward(this.genome, hero.slot, this.buildObservation(hero), act)
-    const mx = out[0]
-    const mz = out[1]
-    const gate = out[2]
-    const pref = out[7]
-    hero.lastRestWish = out[8]
-
-    // Déplacement
-    const mag = Math.min(Math.hypot(mx, mz), 1)
-    if (mag > 0.05) {
-      const slowMult = hero.aff.slow > 0 ? SLOW_FACTOR : 1
-      const sp = hero.cls.speed * slowMult * mag * dt
-      hero.x += (mx / mag) * sp
-      hero.z += (mz / mag) * sp
-    }
+  clampToArena(hero) {
     const r = Math.hypot(hero.x, hero.z)
     if (r > ARENA_RADIUS - 0.8) {
       hero.x *= (ARENA_RADIUS - 0.8) / r
       hero.z *= (ARENA_RADIUS - 0.8) / r
     }
+  }
+
+  // ---- Un pas pour un agent ----
+
+  stepHero(hero, dt) {
+    if (!hero.alive) return
+    this.tickAfflictions(hero, dt, true)
+    if (!hero.alive) return
+
+    const haste = hero.upMult.haste
+    hero.cdBasic -= dt
+    for (let i = 0; i < 3; i++) hero.cds[i] -= dt
+    for (const key of Object.keys(hero.mobilityCds)) hero.mobilityCds[key] -= dt
+    hero.sprintLeft = Math.max(0, hero.sprintLeft - dt)
+    hero.bless = Math.max(0, hero.bless - dt)
+    hero.stance = Math.max(0, hero.stance - dt)
+    hero.mana = Math.min(hero.maxMana, hero.mana + hero.cls.manaRegen * hero.upMult.mana * dt)
+
+    // En plein bond : trajectoire imposée, aucune action possible.
+    if (hero.airborne > 0) {
+      hero.airborne -= dt
+      const total = MOBILITY.jump.airTime
+      const p = Math.min(1, 1 - hero.airborne / total)
+      hero.x = hero.jumpFrom[0] + (hero.jumpTo[0] - hero.jumpFrom[0]) * p
+      hero.z = hero.jumpFrom[1] + (hero.jumpTo[1] - hero.jumpFrom[1]) * p
+      hero.jumpHeight = Math.sin(p * Math.PI) * 1.6
+      if (hero.airborne <= 0) hero.jumpHeight = 0
+      return
+    }
+    if (hero.aff.stun > 0) return
+
+    const out = forward(this.genome, hero.slot, this.buildObservation(hero), act)
+    const mx = out[0]
+    const mz = out[1]
+    const gate = out[OUT_GATE]
+    const pref = out[OUT_TARGET_PREF]
+    hero.lastRestWish = out[OUT_REST]
+
+    const mag = Math.min(Math.hypot(mx, mz), 1)
+    const dirX = mag > 0.001 ? mx / mag : 0
+    const dirZ = mag > 0.001 ? mz / mag : 0
+
+    // --- Mobilité : le réseau décide, le moteur applique les règles ---
+    if (mag > 0.05) {
+      if (out[OUT_MOBILITY + 2] > 0.5 && hero.mobilityCds.jump <= 0) {
+        // Bond : trajectoire aérienne, esquive la mêlée
+        const j = MOBILITY.jump
+        hero.mobilityCds.jump = j.cd
+        hero.airborne = j.airTime
+        hero.jumpFrom = [hero.x, hero.z]
+        let tx = hero.x + dirX * j.distance
+        let tz = hero.z + dirZ * j.distance
+        const r = Math.hypot(tx, tz)
+        if (r > ARENA_RADIUS - 0.8) {
+          tx *= (ARENA_RADIUS - 0.8) / r
+          tz *= (ARENA_RADIUS - 0.8) / r
+        }
+        hero.jumpTo = [tx, tz]
+        hero.stats.jump++
+        this.events.push({ t: 'jump', from: [hero.x, hero.z], to: [tx, tz], slot: hero.slot })
+        return
+      }
+      if (out[OUT_MOBILITY] > 0.5 && hero.mobilityCds.dash <= 0) {
+        const d = MOBILITY.dash
+        hero.mobilityCds.dash = d.cd
+        const fromX = hero.x
+        const fromZ = hero.z
+        hero.x += dirX * d.distance
+        hero.z += dirZ * d.distance
+        this.clampToArena(hero)
+        hero.stats.dash++
+        this.events.push({ t: 'dash', from: [fromX, fromZ], to: [hero.x, hero.z], slot: hero.slot })
+      }
+      if (out[OUT_MOBILITY + 1] > 0.5 && hero.mobilityCds.sprint <= 0) {
+        hero.mobilityCds.sprint = MOBILITY.sprint.cd
+        hero.sprintLeft = MOBILITY.sprint.duration
+        hero.stats.sprint++
+        this.events.push({ t: 'sprint', slot: hero.slot })
+      }
+    }
+
+    // --- Déplacement ---
+    if (mag > 0.05) {
+      const slowMult = hero.aff.slow > 0 ? SLOW_FACTOR : 1
+      const sprintMult = hero.sprintLeft > 0 ? MOBILITY.sprint.speedMult : 1
+      const sp = hero.cls.speed * hero.upMult.speed * slowMult * sprintMult * mag * dt
+      hero.x += dirX * sp
+      hero.z += dirZ * sp
+    }
+    this.clampToArena(hero)
     for (const h of this.heroes) {
       if (h === hero || !h.alive) continue
       const dx = hero.x - h.x
@@ -423,19 +628,18 @@ export class TowerRun {
       }
     }
 
-    // Choix d'action : argmax parmi les actions DISPONIBLES (règle du
-    // jeu), mais le choix lui-même vient du réseau.
+    // --- Action : argmax parmi ce qui est DISPONIBLE ---
     if (gate <= 0.5) return
     let bestAction = -1
     let bestScore = -Infinity
-    if (hero.cdBasic <= 0 && out[3] > bestScore) {
-      bestScore = out[3]
+    if (hero.cdBasic <= 0 && out[OUT_BASIC] > bestScore) {
+      bestScore = out[OUT_BASIC]
       bestAction = 0
     }
     for (let i = 0; i < 3; i++) {
       const ab = hero.cls.abilities[i]
-      if (hero.cds[i] <= 0 && hero.mana >= ab.cost && out[4 + i] > bestScore) {
-        bestScore = out[4 + i]
+      if (hero.cds[i] <= 0 && hero.mana >= ab.cost && out[OUT_ABILITY + i] > bestScore) {
+        bestScore = out[OUT_ABILITY + i]
         bestAction = i + 1
       }
     }
@@ -444,7 +648,8 @@ export class TowerRun {
     if (bestAction === 0) {
       const target = this.pickMonster(hero, hero.cls.range, pref)
       if (!target) return
-      hero.cdBasic = hero.cls.cooldown
+      hero.cdBasic = hero.cls.cooldown * haste
+      hero.stats.basic++
       this.damageMonster(hero, target, this.heroOutgoing(hero, hero.cls.dmg))
       this.events.push({
         t: hero.cls.range > 3 ? 'arrow' : 'slash',
@@ -454,17 +659,18 @@ export class TowerRun {
       return
     }
 
-    const ab = hero.cls.abilities[bestAction - 1]
-    const power = this.heroOutgoing(hero, ab.power)
+    const abIndex = bestAction - 1
+    const ab = hero.cls.abilities[abIndex]
+    const power = this.heroOutgoing(hero, ab.power, true)
 
     switch (ab.kind) {
       case 'dmg': {
         const target = this.pickMonster(hero, ab.range, pref)
         if (!target) return
-        this.commit(hero, bestAction - 1, ab)
+        this.commit(hero, abIndex, ab, haste)
         this.damageMonster(hero, target, power)
         this.applyAfflictions(target, ab.applies)
-        this.events.push({ t: 'cast', from: [hero.x, hero.z], to: [target.x, target.z], color: hero.cls.color })
+        this.events.push({ t: 'cast', from: [hero.x, hero.z], to: [target.x, target.z], color: hero.cls.color, ability: ab.id })
         break
       }
       case 'aoe': {
@@ -476,26 +682,26 @@ export class TowerRun {
           cx = target.x
           cz = target.z
         } else if (!this.pickMonster(hero, ab.radius, pref)) {
-          return // AoE centrée sur soi sans personne autour : inutile
+          return
         }
-        this.commit(hero, bestAction - 1, ab)
+        this.commit(hero, abIndex, ab, haste)
         for (const m of this.monsters) {
           if (Math.hypot(m.x - cx, m.z - cz) <= ab.radius) {
             this.damageMonster(hero, m, power)
             this.applyAfflictions(m, ab.applies)
           }
         }
-        this.events.push({ t: 'aoe', at: [cx, cz], r: ab.radius, color: hero.cls.color })
+        this.events.push({ t: 'aoe', at: [cx, cz], r: ab.radius, color: hero.cls.color, seal: true, ability: ab.id })
         break
       }
       case 'heal': {
         const target = this.pickAlly(hero, ab.range, Math.max(pref, 0.5))
         if (!target || target.hp >= target.maxHp - 1) return
-        this.commit(hero, bestAction - 1, ab)
+        this.commit(hero, abIndex, ab, haste)
         const amount = Math.min(power, target.maxHp - target.hp)
         target.hp += amount
         hero.healing += amount
-        this.events.push({ t: 'heal', to: [target.x, target.z] })
+        this.events.push({ t: 'heal', to: [target.x, target.z], ability: ab.id })
         break
       }
       case 'aoeheal': {
@@ -503,22 +709,22 @@ export class TowerRun {
           (h) => h.alive && h.hp < h.maxHp - 1 && Math.hypot(h.x - hero.x, h.z - hero.z) <= ab.radius
         )
         if (!wounded) return
-        this.commit(hero, bestAction - 1, ab)
+        this.commit(hero, abIndex, ab, haste)
         for (const h of this.heroes) {
           if (!h.alive || Math.hypot(h.x - hero.x, h.z - hero.z) > ab.radius) continue
           const amount = Math.min(power, h.maxHp - h.hp)
           h.hp += amount
           hero.healing += amount
         }
-        this.events.push({ t: 'aoe', at: [hero.x, hero.z], r: ab.radius, color: '#8fe89a' })
+        this.events.push({ t: 'aoe', at: [hero.x, hero.z], r: ab.radius, color: '#8fe89a', seal: true, ability: ab.id })
         break
       }
       case 'buff': {
         const target = ab.target === 'self' ? hero : this.pickAlly(hero, ab.range, 1 - pref, false) ?? hero
-        this.commit(hero, bestAction - 1, ab)
+        this.commit(hero, abIndex, ab, haste)
         if (ab.buff === 'bless') target.bless = BLESS_DURATION
         else if (ab.buff === 'stance') target.stance = STANCE_DURATION
-        this.events.push({ t: 'buff', to: [target.x, target.z], color: hero.cls.color })
+        this.events.push({ t: 'buff', to: [target.x, target.z], color: hero.cls.color, ability: ab.id })
         break
       }
       case 'taunt': {
@@ -530,26 +736,27 @@ export class TowerRun {
           }
         }
         if (taunted === 0) return
-        this.commit(hero, bestAction - 1, ab)
-        this.events.push({ t: 'taunt', at: [hero.x, hero.z], r: ab.range })
+        this.commit(hero, abIndex, ab, haste)
+        this.events.push({ t: 'taunt', at: [hero.x, hero.z], r: ab.range, ability: ab.id })
         break
       }
       case 'drain': {
         const target = this.pickMonster(hero, ab.range, pref)
         if (!target) return
-        this.commit(hero, bestAction - 1, ab)
+        this.commit(hero, abIndex, ab, haste)
         this.damageMonster(hero, target, power)
         const heal = Math.min(power * 0.8, hero.maxHp - hero.hp)
         hero.hp += heal
         hero.healing += heal
-        this.events.push({ t: 'drain', from: [target.x, target.z], to: [hero.x, hero.z] })
+        this.events.push({ t: 'drain', from: [target.x, target.z], to: [hero.x, hero.z], ability: ab.id })
         break
       }
     }
+    hero.stats.abilities[abIndex]++
   }
 
-  commit(hero, abilityIndex, ab) {
-    hero.cds[abilityIndex] = ab.cd
+  commit(hero, abilityIndex, ab, haste = 1) {
+    hero.cds[abilityIndex] = ab.cd * haste
     hero.mana -= ab.cost
   }
 
@@ -566,7 +773,6 @@ export class TowerRun {
     if (m.stats.regen) m.hp = Math.min(m.maxHp, m.hp + m.stats.regen * dt)
     if (m.aff.stun > 0) return
 
-    // Frappe de zone des boss
     if (m.slam) {
       m.slam.timer -= dt
       if (m.slam.timer <= 0) {
@@ -582,7 +788,6 @@ export class TowerRun {
       }
     }
 
-    // Soigneur : soigne le monstre le plus blessé à portée
     if (m.stats.ai === 'healer' && m.cd <= 0) {
       let target = null
       let worst = 0.99
@@ -602,7 +807,6 @@ export class TowerRun {
       }
     }
 
-    // Cible : provocation prioritaire, sinon le héros vivant le plus proche
     let target = m.taunt?.hero ?? null
     if (!target) {
       let bd = Infinity
@@ -622,7 +826,6 @@ export class TowerRun {
     const isRanged = m.stats.ai === 'ranged' || m.stats.ai === 'healer'
 
     if (isRanged && dist < m.stats.range * 0.5) {
-      // Garder ses distances
       const dx = m.x - target.x
       const dz = m.z - target.z
       m.x += (dx / dist) * m.stats.speed * slowMult * dt
@@ -720,8 +923,8 @@ export class TowerRun {
 }
 
 // Fait tourner un run complet à vitesse maximale (usage worker).
-export function runTower(genome, seed, onSnapshot = null, snapshotEvery = 40) {
-  const run = new TowerRun(genome, seed)
+export function runTower(genome, seed, onSnapshot = null, snapshotEvery = 40, options = {}) {
+  const run = new TowerRun(genome, seed, options)
   let tick = 0
   let guard = 0
   while (!run.finished && guard++ < 500000) {
@@ -734,5 +937,6 @@ export function runTower(genome, seed, onSnapshot = null, snapshotEvery = 40) {
     floors: run.floorsCleared,
     time: run.time,
     reason: run.endReason,
+    run,
   }
 }

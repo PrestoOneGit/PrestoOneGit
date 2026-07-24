@@ -14,6 +14,15 @@
         <div class="hud-title">
           <h1>La Tour</h1>
           <p id="gen-info">Génération 0 — en attente</p>
+          <p class="save-state" id="save-state">Session non sauvegardée</p>
+        </div>
+
+        <div class="session-menu" id="session-menu" hidden>
+          <button id="save-now">Sauvegarder maintenant</button>
+          <button id="export-session">Exporter la session (.json)</button>
+          <button id="import-session">Importer une session…</button>
+          <button id="wipe-session" class="danger">Effacer la sauvegarde</button>
+          <input type="file" id="import-file" accept="application/json" hidden />
         </div>
         <div class="hud-controls">
           <div class="hud-replay" id="replay-info">Rejeu : —</div>
@@ -24,6 +33,8 @@
             <button data-rspeed="4">x4</button>
           </div>
           <button id="quality" class="hud-btn hud-btn-secondary">Pions</button>
+          <button id="report" class="hud-btn hud-btn-secondary">Rapport</button>
+          <button id="save-menu" class="hud-btn hud-btn-secondary">Session</button>
           <button id="pause-evo" class="hud-btn hud-btn-secondary">Suspendre</button>
           <button id="reset" class="hud-btn">Recommencer</button>
         </div>
@@ -35,9 +46,28 @@
           <div class="workers-grid" id="workers-grid"></div>
         </section>
         <section class="records-panel">
-          <h2>Rejeux — meilleurs runs</h2>
+          <div class="records-head">
+            <h2>Rejeux</h2>
+            <form class="gen-picker" id="gen-form">
+              <label for="gen-input" class="sr-only">Numéro de génération</label>
+              <input id="gen-input" type="number" min="0" step="1" placeholder="gén." inputmode="numeric" />
+              <button type="submit">Voir</button>
+            </form>
+          </div>
           <ol id="records-list"></ol>
         </section>
+      </aside>
+
+      <aside class="report-panel" id="report-panel" hidden>
+        <div class="report-head">
+          <h2>Rapport du run</h2>
+          <button id="report-close" aria-label="Fermer le rapport">&times;</button>
+        </div>
+        <div class="report-body" id="report-body"></div>
+        <div class="report-actions">
+          <button id="report-copy" class="hud-btn hud-btn-secondary">Copier pour un LLM</button>
+          <button id="report-json" class="hud-btn hud-btn-secondary">Exporter JSON</button>
+        </div>
       </aside>
 
       <aside class="team-panel" id="team-panel">
