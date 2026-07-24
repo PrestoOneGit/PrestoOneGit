@@ -3,89 +3,129 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>La Tour — des aventuriers IA apprennent à grimper</title>
+    <title>La Tour — entraînement d’agents</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="app">
-      <canvas id="scene"></canvas>
+    <canvas id="scene"></canvas>
 
-      <header class="hud-top">
-        <div class="hud-title">
-          <h1>La Tour</h1>
-          <p id="gen-info">Génération 0 — en attente</p>
-          <p class="save-state" id="save-state">Session non sauvegardée</p>
+    <div class="ui" id="ui">
+      <!-- ─────────── Barre supérieure : jamais plus d'une ligne ─────────── -->
+      <header class="bar">
+        <div class="bar-brand">
+          <span class="brand-mark">LA TOUR</span>
+          <span class="brand-sub" id="save-state">session non sauvegardée</span>
         </div>
 
-        <div class="session-menu" id="session-menu" hidden>
-          <button id="save-now">Sauvegarder maintenant</button>
-          <button id="export-session">Exporter la session (.json)</button>
-          <button id="import-session">Importer une session…</button>
-          <button id="wipe-session" class="danger">Effacer la sauvegarde</button>
-          <input type="file" id="import-file" accept="application/json" hidden />
-        </div>
-        <div class="hud-controls">
-          <div class="hud-replay" id="replay-info">Rejeu : —</div>
-          <div class="hud-speed" role="group" aria-label="Vitesse du rejeu">
-            <button data-rspeed="0" aria-label="Pause du rejeu">II</button>
-            <button data-rspeed="1" class="active">x1</button>
-            <button data-rspeed="2">x2</button>
-            <button data-rspeed="4">x4</button>
+        <div class="bar-metrics">
+          <div class="metric">
+            <span class="metric-label">génération</span>
+            <span class="metric-value" id="m-gen">0</span>
           </div>
-          <button id="quality" class="hud-btn hud-btn-secondary">Pions</button>
-          <button id="report" class="hud-btn hud-btn-secondary">Rapport</button>
-          <button id="save-menu" class="hud-btn hud-btn-secondary">Session</button>
-          <button id="pause-evo" class="hud-btn hud-btn-secondary">Suspendre</button>
-          <button id="reset" class="hud-btn">Recommencer</button>
+          <div class="metric">
+            <span class="metric-label">record</span>
+            <span class="metric-value" id="m-best">—</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">moyenne</span>
+            <span class="metric-value dim" id="m-mean">—</span>
+          </div>
+          <div class="metric wide">
+            <span class="metric-label">rejeu en cours</span>
+            <span class="metric-value" id="m-run">—</span>
+          </div>
+        </div>
+
+        <div class="bar-controls">
+          <div class="seg" role="group" aria-label="Vitesse du rejeu">
+            <button data-rspeed="0" title="Pause du rejeu" aria-label="Pause">‖</button>
+            <button data-rspeed="1" class="on">1×</button>
+            <button data-rspeed="2">2×</button>
+            <button data-rspeed="4">4×</button>
+          </div>
+          <button class="btn" id="quality" title="Niveau de détail — sans effet sur la vitesse d’apprentissage">Pions</button>
+          <button class="btn" id="report" title="Analyse détaillée du run affiché">Rapport</button>
+          <button class="btn" id="pause-evo" title="Met l’entraînement en pause (le rejeu continue)">Pause</button>
+          <button class="btn" id="save-menu" aria-haspopup="true" aria-expanded="false">Session</button>
+          <button class="btn icon" id="toggle-dock" title="Afficher ou masquer le panneau latéral" aria-label="Basculer le panneau latéral">›</button>
         </div>
       </header>
 
-      <aside class="right-col">
-        <section class="workers-panel">
-          <h2 id="workers-title">Ascensions parallèles</h2>
-          <div class="workers-grid" id="workers-grid"></div>
+      <!-- ─────────── Escouade : lecture directe pendant le rejeu ─────────── -->
+      <aside class="squad" id="squad">
+        <div class="squad-head">
+          <h2>Escouade</h2>
+          <span class="squad-gen" id="squad-gen">gén. 0</span>
+        </div>
+        <ul class="squad-list" id="squad-list"></ul>
+      </aside>
+
+      <!-- ─────────── Panneau latéral à onglets ─────────── -->
+      <aside class="dock" id="dock">
+        <nav class="tabs" role="tablist">
+          <button role="tab" data-tab="live" class="on" aria-selected="true">Ascensions</button>
+          <button role="tab" data-tab="runs" aria-selected="false">Rejeux</button>
+          <button role="tab" data-tab="log" aria-selected="false">Journal</button>
+        </nav>
+
+        <section class="tab-panel on" data-panel="live">
+          <p class="hint" id="workers-hint">—</p>
+          <div class="worker-grid" id="workers-grid"></div>
         </section>
-        <section class="records-panel">
-          <div class="records-head">
-            <h2>Rejeux</h2>
-            <form class="gen-picker" id="gen-form">
-              <label for="gen-input" class="sr-only">Numéro de génération</label>
-              <input id="gen-input" type="number" min="0" step="1" placeholder="gén." inputmode="numeric" />
-              <button type="submit">Voir</button>
-            </form>
-          </div>
-          <ol id="records-list"></ol>
+
+        <section class="tab-panel" data-panel="runs">
+          <form class="gen-jump" id="gen-form">
+            <input id="gen-input" type="number" min="0" step="1" placeholder="n° de génération" inputmode="numeric" />
+            <button type="submit">Voir</button>
+          </form>
+          <p class="hint" id="runs-hint">Les records apparaîtront ici.</p>
+          <ol class="run-list" id="records-list"></ol>
+        </section>
+
+        <section class="tab-panel" data-panel="log">
+          <ul class="log-list" id="log"></ul>
         </section>
       </aside>
 
-      <aside class="report-panel" id="report-panel" hidden>
-        <div class="report-head">
-          <h2>Rapport du run</h2>
-          <button id="report-close" aria-label="Fermer le rapport">&times;</button>
+      <!-- ─────────── Frise : 300 générations cliquables ─────────── -->
+      <footer class="timeline" id="timeline">
+        <div class="timeline-head">
+          <h2>Progression</h2>
+          <span class="timeline-hint" id="chart-hint">cliquez la courbe pour rejouer une génération</span>
+          <button class="btn icon" id="toggle-timeline" aria-label="Replier la frise" title="Replier la frise">⌄</button>
         </div>
-        <div class="report-body" id="report-body"></div>
-        <div class="report-actions">
-          <button id="report-copy" class="hud-btn hud-btn-secondary">Copier pour un LLM</button>
-          <button id="report-json" class="hud-btn hud-btn-secondary">Exporter JSON</button>
-        </div>
-      </aside>
-
-      <aside class="team-panel" id="team-panel">
-        <h2>Équipe en rejeu — <span id="team-gen">gén. 0</span></h2>
-        <div class="team-grid" id="team-grid"></div>
-      </aside>
-
-      <footer class="bottom-panel">
-        <div class="chart-box">
-          <h2>Étage record par génération</h2>
-          <canvas id="chart" width="360" height="110"></canvas>
-        </div>
-        <div class="log-box">
-          <h2>Journal d’ascension</h2>
-          <ul id="log"></ul>
-        </div>
+        <canvas id="chart"></canvas>
       </footer>
     </div>
+
+    <!-- Le menu vit au niveau racine, hors de la barre : nourri par un
+         `backdrop-filter`, celle-ci crée un contexte d'empilement qui
+         emprisonnerait le menu sous le panneau latéral. -->
+    <div class="menu" id="session-menu" hidden>
+      <button id="save-now">Sauvegarder maintenant</button>
+      <button id="export-session">Exporter (.json)</button>
+      <button id="import-session">Importer…</button>
+      <hr />
+      <button id="wipe-session" class="danger">Effacer la sauvegarde</button>
+      <button id="reset" class="danger">Repartir de zéro</button>
+      <input type="file" id="import-file" accept="application/json" hidden />
+    </div>
+
+    <!-- ─────────── Rapport ─────────── -->
+    <div class="overlay" id="report-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="report-title">
+        <header class="modal-head">
+          <h2 id="report-title">Rapport du run</h2>
+          <button id="report-close" aria-label="Fermer">✕</button>
+        </header>
+        <div class="modal-body" id="report-body"></div>
+        <footer class="modal-foot">
+          <button class="btn" id="report-copy">Copier pour un LLM</button>
+          <button class="btn" id="report-json">Exporter JSON</button>
+        </footer>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

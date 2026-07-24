@@ -19,8 +19,8 @@ renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
 
 const scene = new THREE.Scene()
-renderer.setClearColor('#2b2320')
-scene.fog = new THREE.Fog('#2b2320', 50, 110)
+renderer.setClearColor('#0e1214')
+scene.fog = new THREE.Fog('#0e1214', 48, 108)
 
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 300)
 camera.position.set(22, 18, 22)
@@ -236,15 +236,15 @@ hud = new HUD({
     if (!champion) {
       const available = evolution.archivedGenerations()
       const range = available.length
-        ? `générations disponibles : ${available[available.length - 1]} à ${available[0]}`
+        ? `générations en mémoire : ${available[available.length - 1]} à ${available[0]}`
         : 'aucune génération archivée pour l’instant'
       hud.addLog(`Génération ${gen} introuvable — ${range}.`)
+      hud.selectTab('log')
       return
     }
     pinned = true
     pendingRecord = null
     startReplay(champion)
-    hud.addLog(`Rejeu de la génération ${gen} (étage ${champion.floors + 1}).`)
   },
   onReport: () => {
     if (!replayMeta) return
@@ -337,12 +337,12 @@ function animate() {
 
   if (replayRun) {
     const alive = replayRun.heroes.filter((h) => h.alive).length
-    const label = pinned ? 'épinglé — ' : ''
-    const boss = replayRun.floor % 10 === 0 ? ' (BOSS)' : ''
-    const end = replayRun.finished ? ` — fin : ${replayRun.endReason}` : ''
-    hud.setReplayInfo(
-      `${label}gén. ${replayMeta.generation} — étage ${replayRun.floor}${boss}, ${alive}/5 debout, ${replayRun.restsLeft} repos${end}`
-    )
+    const parts = [`gén. ${replayMeta.generation}`, `étage ${replayRun.floor}`]
+    if (replayRun.floor > 0 && replayRun.floor % 10 === 0) parts.push('BOSS')
+    parts.push(`${alive}/5 debout`, `${replayRun.restsLeft} repos`)
+    if (pinned) parts.push('épinglé')
+    if (replayRun.finished) parts.push(replayRun.endReason)
+    hud.setReplayInfo(parts.join(' · '))
     hud.updateTeamStats(replayRun, replayMeta.generation)
   }
 
