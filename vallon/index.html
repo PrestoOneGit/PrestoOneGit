@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vallon — simulation de vie</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <header class="hud-top">
+        <div class="hud-title">
+          <h1>Vallon</h1>
+          <p id="clock">Jour 1 — matin</p>
+        </div>
+        <div class="hud-controls">
+          <div class="hud-pop">
+            <span class="hud-pop-count" id="pop-count">0</span>
+            <span class="hud-pop-label">habitants</span>
+          </div>
+          <div class="hud-speed" role="group" aria-label="Vitesse de la simulation">
+            <button data-speed="0" aria-label="Pause">II</button>
+            <button data-speed="1" class="active">x1</button>
+            <button data-speed="3">x3</button>
+            <button data-speed="8">x8</button>
+          </div>
+          <button id="new-world" class="hud-btn">Nouveau monde</button>
+        </div>
+      </header>
+
+      <p class="hud-hint" id="hint">Cliquez sur une créature pour la suivre — molette pour zoomer, glisser pour tourner</p>
+
+      <aside class="creature-panel" id="creature-panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="c-name">—</h2>
+            <p id="c-meta">—</p>
+          </div>
+          <button id="panel-close" aria-label="Fermer le panneau">&times;</button>
+        </div>
+        <p class="c-state" id="c-state">—</p>
+        <div class="needs">
+          <div class="need">
+            <span class="need-label">Faim</span>
+            <div class="bar"><div class="bar-fill fill-faim" id="bar-faim"></div></div>
+          </div>
+          <div class="need">
+            <span class="need-label">Soif</span>
+            <div class="bar"><div class="bar-fill fill-soif" id="bar-soif"></div></div>
+          </div>
+          <div class="need">
+            <span class="need-label">Énergie</span>
+            <div class="bar"><div class="bar-fill fill-energie" id="bar-energie"></div></div>
+          </div>
+        </div>
+      </aside>
+
+      <footer class="hud-stats">
+        <span id="stat-births">0 naissances</span>
+        <span class="stat-sep"></span>
+        <span id="stat-deaths">0 disparitions</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
