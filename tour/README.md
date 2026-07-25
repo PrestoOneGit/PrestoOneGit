@@ -25,16 +25,35 @@ Ou depuis ce dossier : `npm run dev`, `npm run build:single`.
 
 ## Coût de calcul
 
-Un run complet coûte **~91 ms** en JavaScript, dont **95 % en passes avant
-des réseaux** (mesuré par `audit/`). La logique de jeu ne pèse que 5 % :
-micro-optimiser le moteur ne mènerait nulle part, et c'est précisément
-pourquoi le portage GPU est le bon levier.
+Un run complet coûte **~91 ms** en JavaScript (mesuré par `audit/`).
 
 Le coût est passé de ~21 ms à ~91 ms avec la refonte du plateau, pour deux
 raisons qui n'en sont pas une régression : les réseaux ont grossi
 (108 → 24 → 16 contre 66 → 28 → 18), et surtout les équipes survivent
 maintenant jusqu'à l'étage 20 au lieu de mourir au 8ᵉ — elles simulent
 donc bien plus longtemps.
+
+**Le profil s'est inversé.** Sur la version précédente, 95 % du temps
+partait dans les passes avant des réseaux et 5 % seulement dans la logique
+de jeu. Mesuré sur 5 runs et 41 876 décisions de réseau, avec les mêmes
+graines pour les deux mesures :
+
+| | part du temps |
+|---|---|
+| Passes avant des réseaux | **36 %** |
+| Logique de jeu — terrain, ligne de vue, états, invocations | **64 %** |
+
+La conclusion qui figurait ici — « micro-optimiser le moteur ne mènerait
+nulle part » — n'est donc plus valable. La logique de jeu est devenue le
+poste dominant et n'a jamais été optimisée.
+
+L'argument pour le GPU tient toujours, mais il ne repose pas sur la vitesse
+par run : l'audit montre **15 085 paramètres pour une population de 32**. Ce
+qui bride le projet est la taille de la population, pas le nombre de runs
+par seconde. Tripler la vitesse donnerait le même plafond, plus vite.
+C'est aussi la raison de ne pas passer par WebAssembly : le gain porterait
+sur la mauvaise contrainte, et les fonctions transcendantes n'y sont pas
+garanties identiques au bit près — ce dont dépend tout l'audit.
 
 ## Le plateau (`src/sim/terrain.js`)
 
