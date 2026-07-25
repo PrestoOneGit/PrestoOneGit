@@ -2,8 +2,11 @@
 //
 // Trois causes possibles, qui ne se corrigent pas du tout pareil :
 //
-//   (a) MUR ARITHMÉTIQUE — les monstres montent en puissance plus vite
-//       que les agents. Aucun jeu, même parfait, ne passe l'étage N.
+//   (a) MUR ARITHMÉTIQUE — la pression de l'étage croît plus vite que ce
+//       que l'équipe peut encaisser. Aucun jeu, même parfait, ne passe
+//       l'étage N. Depuis la refonte, plus aucune stat ne croît côté
+//       agents : la pression vient du NOMBRE de monstres et de leur
+//       montée en puissance propre, pas d'un écart de multiplicateurs.
 //   (b) SATURATION DE LA RECHERCHE — le génome est trop grand pour la
 //       population : l'évolution n'explore plus rien d'utile.
 //   (c) MANQUE DE LEVIERS — les agents jouent déjà au maximum de ce que
@@ -14,7 +17,7 @@
 import { TowerRun, runTower, mulberry32, TICK } from '../src/sim/engine.js'
 import { randomTeamGenome, crossoverTeams, mutateTeam, TEAM_GENOME_SIZE, describeComposition } from '../src/sim/brain.js'
 import {
-  CLASSES, FLOOR_BUDGET, HERO_GROWTH, MONSTER_GROWTH, MONSTERS, UPGRADES, tierForFloor,
+  CLASSES, FLOOR_BUDGET, MONSTER_GROWTH, MONSTERS, PASSIVES, tierForFloor,
 } from '../src/sim/data.js'
 import { mean } from './stats.js'
 
@@ -27,30 +30,37 @@ console.log('DIAGNOSTIC DU PLATEAU\n')
 // Rapport de puissance entre ce que l'équipe encaisse/inflige et ce que
 // l'étage oppose, en supposant un jeu parfait.
 // ---------------------------------------------------------------------
-console.log('(a) MUR ARITHMÉTIQUE — croissance comparée\n')
-console.log('  étage   agents   monstres   budget   PV totaux étage   ratio monstres/agents')
-console.log('  ' + '─'.repeat(74))
+console.log('(a) MUR ARITHMÉTIQUE — pression de l’étage contre PV de l’équipe\n')
+console.log('  étage   monstres   budget   nombre   PV totaux étage   ratio étage/équipe')
+console.log('  ' + '─'.repeat(72))
 
+// Les PV de l'équipe sont désormais CONSTANTS : plus aucune stat ne monte
+// au niveau. Le ratio ci-dessous est donc directement la pente du mur.
 const baseHeroHp = CLASSES.reduce((s, c) => s + c.hp, 0)
+const teamHp = (baseHeroHp / CLASSES.length) * 5
+const ratios = []
 for (const floor of [1, 5, 10, 15, 20, 25, 30, 40]) {
-  const heroMult = Math.pow(HERO_GROWTH, floor - 1)
   const monMult = Math.pow(MONSTER_GROWTH, floor - 1)
   const tier = tierForFloor(floor)
   const avgCost = mean(tier.pool.map((t) => MONSTERS[t].cost))
   const avgHp = mean(tier.pool.map((t) => MONSTERS[t].hp))
   const count = FLOOR_BUDGET(floor) / avgCost
   const floorHp = count * avgHp * monMult
-  const teamHp = baseHeroHp * heroMult
+  ratios.push([floor, floorHp / teamHp])
   console.log(
-    `  ${String(floor).padStart(4)}    ${heroMult.toFixed(2)}×     ${monMult.toFixed(2)}×    ${String(FLOOR_BUDGET(floor)).padStart(4)}    ` +
-      `${Math.round(floorHp).toLocaleString('fr-FR').padStart(10)}        ${(floorHp / teamHp).toFixed(1)}×`
+    `  ${String(floor).padStart(4)}      ${monMult.toFixed(2)}×    ${String(FLOOR_BUDGET(floor).toFixed(0)).padStart(4)}    ` +
+      `${count.toFixed(1).padStart(5)}    ${Math.round(floorHp).toLocaleString('fr-FR').padStart(10)}        ${(floorHp / teamHp).toFixed(1)}×`
   )
 }
 console.log(
-  `\n  Les monstres croissent de ${((MONSTER_GROWTH - 1) * 100).toFixed(1)} % par étage, les agents de ${((HERO_GROWTH - 1) * 100).toFixed(1)} %.`
+  `\n  Les monstres croissent de ${((MONSTER_GROWTH - 1) * 100).toFixed(1)} % par étage ; les agents, de 0 % —` +
+    ' le draft ne donne plus de stats.'
 )
-const gapDouble = Math.log(2) / Math.log(MONSTER_GROWTH / HERO_GROWTH)
-console.log(`  L'écart de puissance DOUBLE tous les ${gapDouble.toFixed(0)} étages, et le nombre de monstres croît en plus linéairement.`)
+console.log(
+  `  Le rapport de PV passe de ${ratios[0][1].toFixed(1)}× au 1ᵉʳ étage à ${ratios.at(-1)[1].toFixed(1)}× au 40ᵉ.` +
+    ' Une équipe ne peut le compenser'
+)
+console.log('  que par la tactique : positionnement, pièges, portails scellés, contrôle.')
 
 // ---------------------------------------------------------------------
 // (b) SATURATION DE LA RECHERCHE
@@ -104,40 +114,51 @@ let guard = 0
 while (!run.finished && guard++ < 500000) run.step(TICK)
 
 console.log(`\n  Champion : ${describeComposition(best.g)} — étage ${run.floor}, issue « ${run.endReason} »`)
-console.log('\n  agent          niv  capacité 1  capacité 2  capacité 3  base   dash  course  bond')
-console.log('  ' + '─'.repeat(80))
+console.log('\n  agent          niv  capacités lancées                       base   dash  course  bond')
+console.log('  ' + '─'.repeat(84))
 for (const h of run.heroes) {
-  const a = h.stats.abilities
+  // `stats.abilities` est indexé par identifiant de capacité : un agent ne
+  // porte que ce qu'il a drafté, l'index de kit n'a plus de sens.
+  const used = Object.entries(h.stats.abilities)
+    .map(([id, n]) => `${h.abilities.find((a) => a.id === id)?.label ?? id} ${n}`)
+    .join(' · ')
   console.log(
-    `  ${h.cls.label.padEnd(12)}  ${String(h.level).padStart(3)}  ${String(a[0]).padStart(9)}  ${String(a[1]).padStart(10)}  ` +
-      `${String(a[2]).padStart(10)}  ${String(h.stats.basic).padStart(4)}  ${String(h.stats.dash).padStart(5)}  ` +
+    `  ${h.cls.label.padEnd(12)}  ${String(h.level).padStart(3)}  ${used.padEnd(38).slice(0, 38)}  ` +
+      `${String(h.stats.basic).padStart(4)}  ${String(h.stats.dash).padStart(5)}  ` +
       `${String(h.stats.sprint).padStart(6)}  ${String(h.stats.jump).padStart(4)}`
   )
 }
 
-const totalAbility = run.heroes.reduce((s, h) => s + h.stats.abilities.reduce((x, y) => x + y, 0), 0)
+const abilityUses = (h) => Object.values(h.stats.abilities).reduce((x, y) => x + y, 0)
+const totalAbility = run.heroes.reduce((s, h) => s + abilityUses(h), 0)
 const totalBasic = run.heroes.reduce((s, h) => s + h.stats.basic, 0)
+// Une capacité draftée mais jamais lancée est un levier gaspillé : c'est
+// le signal qui distingue « les règles sont saturées » de « il reste du jeu ».
 const unusedAbilities = run.heroes.flatMap((h) =>
-  h.stats.abilities.map((n, i) => (n === 0 ? `${h.cls.label}/${h.cls.abilities[i].label}` : null))
-).filter(Boolean)
+  h.abilities.filter((a) => !h.stats.abilities[a.id]).map((a) => `${h.cls.label}/${a.label}`)
+)
 
 console.log(`\n  Capacités lancées : ${totalAbility} · attaques de base : ${totalBasic}`)
 console.log(`  Part des capacités dans les actions : ${((100 * totalAbility) / (totalAbility + totalBasic)).toFixed(0)} %`)
 if (unusedAbilities.length) {
-  console.log(`  JAMAIS utilisées (${unusedAbilities.length}) : ${unusedAbilities.join(', ')}`)
+  console.log(`  Draftées mais JAMAIS lancées (${unusedAbilities.length}) : ${unusedAbilities.join(', ')}`)
 } else {
-  console.log('  Toutes les capacités de l’équipe ont servi.')
+  console.log('  Toutes les capacités draftées ont servi.')
 }
 
-// Diversité des améliorations choisies
-const upCounts = new Array(UPGRADES.length).fill(0)
-for (const h of run.heroes) h.upgrades.forEach((n, i) => (upCounts[i] += n))
-const totalUp = upCounts.reduce((a, b) => a + b, 0)
+// Diversité du draft : quelles cartes le réseau prend-il réellement ?
+const picks = new Map()
+for (const h of run.heroes) for (const c of h.stats.cards) picks.set(c, (picks.get(c) ?? 0) + 1)
 console.log(
-  '\n  Améliorations choisies : ' +
-    (totalUp === 0
-      ? 'aucune (le run s’arrête avant l’étage 5)'
-      : UPGRADES.map((u, i) => `${u.label} ${upCounts[i]}`).join(' · '))
+  '\n  Cartes draftées : ' +
+    (picks.size === 0
+      ? 'aucune (le run s’arrête avant le premier niveau)'
+      : [...picks].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ×${v}`).join(' · '))
+)
+const neverTaken = PASSIVES.filter((p) => ![...picks.keys()].includes(p.label))
+console.log(
+  `  Passifs jamais pris sur ce run : ${neverTaken.length ? neverTaken.map((p) => p.label).join(', ') : 'aucun'}` +
+    ` (sur ${PASSIVES.length})`
 )
 
 // Où meurent les équipes, et comment ?
