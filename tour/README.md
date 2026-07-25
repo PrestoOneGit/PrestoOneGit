@@ -18,7 +18,8 @@ l'installation complète) :
 ```bash
 npm run tour     # Chrome recommandé → http://localhost:5173
 npm run build    # fichier autonome dans tour/dist-single/index.html
-npm run audit    # la suite de vérification (12 tests)
+npm run audit            # la suite de vérification (12 tests)
+npm run verifier-moteurs # Node et le navigateur calculent-ils pareil ?
 ```
 
 Ou depuis ce dossier : `npm run dev`, `npm run build:single`.
@@ -29,7 +30,7 @@ Un run complet coûte **~91 ms** en JavaScript (mesuré par `audit/`).
 
 Le coût est passé de ~21 ms à ~91 ms avec la refonte du plateau, pour deux
 raisons qui n'en sont pas une régression : les réseaux ont grossi
-(108 → 24 → 16 contre 66 → 28 → 18), et surtout les équipes survivent
+(156 → 24 → 16 contre 66 → 28 → 18), et surtout les équipes survivent
 maintenant jusqu'à l'étage 20 au lieu de mourir au 8ᵉ — elles simulent
 donc bien plus longtemps.
 
@@ -48,7 +49,7 @@ nulle part » — n'est donc plus valable. La logique de jeu est devenue le
 poste dominant et n'a jamais été optimisée.
 
 L'argument pour le GPU tient toujours, mais il ne repose pas sur la vitesse
-par run : l'audit montre **15 085 paramètres pour une population de 32**. Ce
+par run : l'audit montre **20 845 paramètres pour une population de 32**. Ce
 qui bride le projet est la taille de la population, pas le nombre de runs
 par seconde. Tripler la vitesse donnerait le même plafond, plus vite.
 C'est aussi la raison de ne pas passer par WebAssembly : le gain porterait
@@ -122,7 +123,7 @@ ne vaudrait rien et Shadow Step non plus.
 
 ## L'apprentissage (zéro heuristique)
 
-- MLP **108 → 24 → 16** par agent (3 016 poids ; 15 085 pour l'équipe des 5,
+- MLP **156 → 24 → 16** par agent (4 168 poids ; 20 845 pour l'équipe des 5,
   classes comprises). Observations brutes : soi et ses états, cooldowns de
   mobilité, capacités et passifs possédés, **6 capteurs de distance aux murs**,
   4 monstres proches, 4 alliés, ses invocations, les cadavres proches, les
@@ -175,6 +176,52 @@ tour.playGeneration(130)          // rejouer ce champion dans la vue 3D
 ```
 
 ## Ce qu'on observe (mesuré)
+
+### La méta : huit classes sur neuf sont jouées
+
+Mesuré sur **4 essais d'évolution indépendants**, 25 générations chacun —
+un motif présent dans un seul essai ne serait que du bruit. Part de chaque
+classe dans la population entière (répartition uniforme = 11 %) :
+
+| classe | gén. 0 | gén. 24 |
+|---|---|---|
+| Berserk | 12 % | 20 % |
+| Invocateur | 8 % | 15 % |
+| Archère | 10 % | 13 % |
+| Nécromancien | 12 % | 12 % |
+| Mage | 12 % | 11 % |
+| Clerc | 13 % | 11 % |
+| Lutin | 12 % | 10 % |
+| Occultiste | 12 % | 7 % |
+| **Chevalier** | 9 % | **1 %** |
+
+Les compositions championnes le disent mieux que les pourcentages : **aucune
+n'empile quatre fois la même classe**, et deux sont composées de cinq classes
+différentes.
+
+```
+essai 0 : 2× invocateur / archère / lutin / nécromancien
+essai 1 : clerc / occultiste / berserk / archère / nécromancien
+essai 2 : 3× berserk / invocateur / clerc
+essai 3 : 2× mage / archère / invocateur / lutin
+```
+
+Il a fallu deux passes de rééquilibrage pour y arriver. La première a révélé
+que le **DPS de la capacité de départ** était le facteur dominant — un agent
+commence avec une seule capacité — et il allait de 5,5 (Chevalier) à 15,0
+(Berserk), soit un écart de 2,73×. Compressé à 1,27×, le Berserk est tombé de
+52 % à 13 %… et l'Invocateur est monté à 37 %. La seconde passe l'a ramené à
+15 % et a réparé les deux kits dont la valeur n'atteignait jamais la fitness :
+« Lever les morts » ne faisait *rien* sans cadavre à portée, et les bonus du
+Lutin ne valaient pas un corps de plus.
+
+**Le Chevalier reste marginal, et c'est un choix.** Voir la note sur la
+limite de `fitness()` dans `engine.js` : le terme de survie est une
+*fraction* de PV, donc encaisser deux fois et demie plus de coups
+n'apporte rien de mesurable. Le corriger reviendrait à récompenser le
+barème au lieu du jeu.
+
+### Progression
 
 Mesures sur le plateau carré, population 32, 4 graines par évaluation :
 
@@ -274,8 +321,50 @@ artefact du code plutôt que de la sélection, il apparaîtrait là aussi.
 
 ```bash
 node audit/audit.mjs                      # suite complète
+node audit/verif-moteurs.mjs              # reproductibilité Node ↔ navigateur
+node audit/selectivite-draft.mjs          # le réseau choisit-il sa carte ?
 node audit/cross-check.mjs session.json   # les chiffres du HUD, recalculés hors de l'appli
 ```
+
+### Reproductibilité entre moteurs
+
+`verif-moteurs.mjs` exécute les mêmes runs dans Node **et dans un vrai
+navigateur**, puis compare au bit près. Ce test échouait 6 fois sur 6 : le
+même génome sur la même graine donnait 24 étages sous Node et 19 sous
+Chromium. Deux causes, toutes deux réelles.
+
+ECMAScript n'impose pas le dernier bit des fonctions transcendantes.
+`Math.cos(0.1)` vaut `0.9950041652780257` sous Node et `…258` sous Chrome.
+Le moteur en appelait sur le chemin chaud — `hypot` 28 fois, `sin` 5, `cos`
+4, `tanh` 2, `exp` 1, `pow` 1, `atan2` 1. Un bit sur les PV d'un monstre le
+fait mourir un tick plus tard et, vingt étages plus loin, les trajectoires
+n'ont plus rien de commun. `src/sim/exact.js` les remplace toutes par des
+constantes littérales et des opérations normées.
+
+Et `[0,1,2,3].sort(() => rng() - 0.5)` pour placer les portails : ce
+comparateur n'est pas un ordre total, la norme laisse donc le résultat à
+l'implémentation — et il consomme un nombre d'appels au générateur qui
+dépend de l'algorithme de tri, décalant tout le flux aléatoire en aval.
+Remplacé par un mélange de Fisher-Yates.
+
+**6/6 identiques aujourd'hui.** C'est le prérequis de la phase GPU : sans
+lui, impossible de vérifier dans le navigateur ce qu'une machine louée a
+calculé.
+
+### Le draft choisit-il vraiment ?
+
+La fréquence brute des cartes prises ne prouve rien : une carte rarement
+proposée ne peut pas être souvent prise. `selectivite-draft.mjs` compare
+donc le choix à un tirage au hasard **parmi les mêmes offres**.
+
+L'encodage précédent résumait chaque carte à deux scores flous, si bien que
+les dix passifs se réduisaient à **trois signatures** — « Célérité » et
+« Concentration » étaient littéralement le même vecteur. C'est corrigé :
+10 signatures pour 10 passifs. Mais la mesure reste franche — **1,22× le
+hasard à 14 générations, et la première carte de la liste prise 48 % du
+temps**. L'encodage a levé l'impossibilité, il n'a pas encore produit
+l'apprentissage : le draft ne pèse qu'une vingtaine de décisions sur 2 600
+ticks. Le test est en place pour suivre ce chiffre.
 
 Ce qui est vérifié : déterminisme au bit près, réalité du travail effectué,
 effondrement des performances si l'on vide ou mélange les poids des réseaux,
@@ -305,7 +394,7 @@ plateau. Le plafond observé passe de l'étage 8-10 à l'étage 23 en 18
 générations, et il n'est plus atteint par écrasement arithmétique.
 
 Un frein secondaire subsiste et s'est même accentué : **le génome est
-surdimensionné pour la population** — 15 085 paramètres pour 32 individus.
+surdimensionné pour la population** — 20 845 paramètres pour 32 individus.
 Un algorithme génétique explore correctement quelques centaines de
 paramètres à cette taille de population. C'est l'argument principal pour la
 phase GPU : ce n'est pas la vitesse par run qui manque, c'est la taille de

@@ -176,6 +176,30 @@ export class TowerRun {
   // Termes continus cumulés : sans eux le paysage est un escalier à
   // marches plates où aucune mutation ne peut être récompensée tant
   // qu'elle ne fait pas gagner un étage entier.
+  // Ce que l'évolution cherche à maximiser. Chaque terme continu existe
+  // pour une raison mesurée : sans eux, 99,4 % de la variance venait du
+  // nombre entier d'étages et aucun enfant sur 280 ne dépassait son parent.
+  //
+  // LIMITE CONNUE — `hpFraction` est une FRACTION : un Chevalier à 50 % de
+  // ses 320 PV compte exactement autant qu'un Mage à 50 % de ses 135. La
+  // seule différence du tank, encaisser deux fois et demie plus de coups,
+  // est donc structurellement invisible ici. C'est pourquoi le Chevalier
+  // tombe à 1 % de la population en 25 générations dans les quatre essais,
+  // même après avoir reçu des dégâts sur sa Provocation. Choix assumé : on
+  // le laisse marginal plutôt que de compter les PV absolus, ce qui
+  // reviendrait à récompenser le barème au lieu du jeu.
+  // Ce que l'évolution maximise. Les termes continus existent pour une
+  // raison mesurée : sans eux, 99,4 % de la variance venait du nombre
+  // entier d'étages et aucun enfant sur 280 ne dépassait son parent.
+  //
+  // LIMITE ASSUMÉE — `hpFraction` est une FRACTION. Un Chevalier à 50 % de
+  // ses 320 PV compte donc exactement autant qu'un Mage à 50 % de ses 135,
+  // et la seule différence du tank — encaisser deux fois et demie plus —
+  // est structurellement invisible ici. C'est pourquoi le Chevalier tombe à
+  // 1 % de la population en 25 générations dans les quatre essais, même
+  // après avoir reçu des dégâts sur sa Provocation. On le laisse marginal :
+  // compter les PV absolus reviendrait à récompenser le barème plutôt que
+  // le jeu, et l'évolution apprendrait à empiler des PV inutiles.
   fitness() {
     const alive = this.heroes.filter((h) => h.alive).length
     const totalDamage = this.heroes.reduce((s, h) => s + h.damage, 0)
