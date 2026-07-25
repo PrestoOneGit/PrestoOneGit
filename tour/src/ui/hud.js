@@ -12,7 +12,7 @@ import { CLASSES } from '../sim/data.js'
 export class HUD {
   constructor({
     workerCount, onPauseToggle, onReset, onReplaySpeed, onSelectRecord,
-    onQualityToggle, onPickGeneration, onReport, onSessionAction,
+    onQualityToggle, onPickGeneration, onReport, onRecord, onSessionAction,
   }) {
     this.ui = document.getElementById('ui')
     this.mGen = document.getElementById('m-gen')
@@ -66,6 +66,9 @@ export class HUD {
     })
 
     document.getElementById('report').addEventListener('click', () => onReport())
+
+    this.recordBtn = document.getElementById('record')
+    this.recordBtn.addEventListener('click', () => onRecord())
 
     // --- Panneau latéral repliable ---
     const dockToggle = document.getElementById('toggle-dock')
@@ -176,6 +179,19 @@ export class HUD {
 
   closeReport() {
     this.reportOverlay.hidden = true
+  }
+
+  // Pendant l'encodage, le bouton devient l'indicateur d'avancement et
+  // permet d'interrompre : une ascension de 40 étages fait plusieurs
+  // minutes de vidéo.
+  setRecording(on, secondes = 0) {
+    this.recordBtn.classList.toggle('on', on)
+    this.recordBtn.textContent = on
+      ? (secondes ? `⏺ ${secondes.toFixed(0)}s` : '⏺ …')
+      : 'Vidéo'
+    this.recordBtn.title = on
+      ? 'Enregistrement en cours — cliquer pour arrêter et récupérer la vidéo'
+      : 'Enregistrer l’ascension en vidéo 60 images/s'
   }
 
   resetControls() {

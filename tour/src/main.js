@@ -8,6 +8,7 @@ import {
   clearSession, downloadJson, exportSession, importSession, loadSession, saveSession,
 } from './ga/persistence.js'
 import { QUALITY_LEVELS, Tower3D } from './view/tower3d.js'
+import { Enregistreur, enregistrementDisponible, telechargerVideo } from './view/enregistreur.js'
 import { HUD } from './ui/hud.js'
 
 // ---- Scène ----
@@ -70,6 +71,7 @@ let pinned = false
 let pendingRecord = null
 let replayRestartTimer = 0
 let simAccumulator = 0
+let enregistreur = null
 
 const bootstrap = {
   generation: 0,
@@ -197,6 +199,50 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
   e.target.value = ''
 })
 
+// ---- Enregistrement vidéo ----
+
+// Rejoue l'ascension affichée DEPUIS LE DÉBUT et l'encode en 60 images/s.
+// On repart de zéro plutôt que de filmer la suite : une vidéo qui commence
+// au milieu d'un étage n'a pas d'intérêt, et la run est déterministe donc
+// la reprise est exacte.
+async function enregistrerRun() {
+  if (enregistreur?.actif) {
+    enregistreur.arreter()
+    return
+  }
+  if (!replayMeta) return
+  if (!enregistrementDisponible()) {
+    hud.addLog('Ce navigateur ne sait pas encoder de vidéo.')
+    return
+  }
+  const meta = replayMeta
+  const etaitEpingle = pinned
+  pinned = true // pas question qu'un nouveau record vole la run en cours
+  startReplay(meta)
+  hud.setRecording(true)
+
+  enregistreur = new Enregistreur({
+    canvas,
+    dessiner: (dt) => renderFrame(dt),
+    terminee: () => replayRun?.finished ?? true,
+    onProgress: (s) => hud.setRecording(true, s),
+  })
+  try {
+    const { blob, ext, secondes } = await enregistreur.enregistrer()
+    telechargerVideo(blob, `tour-gen${meta.generation}-etage${replayRun.floor}.${ext}`)
+    hud.addLog(
+      `Vidéo exportée : génération ${meta.generation}, étage ${replayRun.floor}, ` +
+        `${secondes.toFixed(0)} s à 60 images/s.`
+    )
+  } catch (err) {
+    hud.addLog(`Enregistrement impossible : ${err.message}`)
+  } finally {
+    hud.setRecording(false)
+    pinned = etaitEpingle
+    enregistreur = null
+  }
+}
+
 // ---- HUD ----
 
 hud = new HUD({
@@ -249,6 +295,7 @@ hud = new HUD({
     pendingRecord = null
     startReplay(champion)
   },
+  onRecord: () => enregistrerRun(),
   onReport: () => {
     if (!replayMeta) return
     // Le rapport rejoue le run en mode journalisé : mêmes graine et
@@ -348,12 +395,12 @@ function stepReplay(dt) {
   }
 }
 
-function animate() {
-  requestAnimationFrame(animate)
-  const dt = Math.min(clock.getDelta(), 0.1)
+// Une image : avance la simulation de dt, met le HUD à jour, rend la scène.
+// L'enregistreur vidéo l'appelle avec un dt fixe de 1/60 s, la boucle
+// interactive avec le temps réellement écoulé.
+function renderFrame(dt, { avancer = true } = {}) {
   elapsed += dt
-
-  stepReplay(dt)
+  if (avancer) stepReplay(dt)
 
   if (replayRun) {
     const alive = replayRun.heroes.filter((h) => h.alive).length
@@ -369,6 +416,15 @@ function animate() {
   tower.update(dt, elapsed, camera)
   controls.update()
   renderer.render(scene, camera)
+}
+
+function animate() {
+  requestAnimationFrame(animate)
+  // Pendant un enregistrement, c'est l'enregistreur qui pilote les images :
+  // la boucle interactive se met en retrait pour ne pas doubler la
+  // simulation, ce qui accélérerait la run dans la vidéo.
+  if (enregistreur?.actif) return
+  renderFrame(Math.min(clock.getDelta(), 0.1))
 }
 
 animate()

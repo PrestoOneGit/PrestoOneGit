@@ -116,11 +116,33 @@ export function crossoverTeams(rng, a, b) {
 }
 
 export function mutateTeam(rng, genome) {
-  // Mutation de classe : rare, mais c'est elle qui explore la méta
-  // (la composition d'équipe). Le cerveau du slot est conservé —
-  // entrées/sorties identiques, l'évolution le réadaptera.
+  // Mutation de classe : rare, mais c'est elle qui explore la méta.
+  //
+  // Le cerveau du slot était auparavant conservé tel quel, au motif que les
+  // entrées et les sorties ne changent pas. En pratique c'est faux : les
+  // observations décrivent les capacités PORTÉES, et les sorties 4 à 7
+  // désignent des emplacements dont le contenu vient de changer du tout au
+  // tout. L'agent muté continue donc de jouer la politique de son ancienne
+  // classe — mesuré sur un champion réel à la génération 4703, dont le
+  // Lutin fraîchement muté mourait à l'étage 2 sur six graines sur six, au
+  // niveau 3,3 quand ses coéquipiers atteignaient le niveau 22. Un
+  // cinquième de l'équipe perdu, et l'évolution s'en accommodait.
+  //
+  // On perturbe donc fortement le cerveau muté au lieu de le recopier : il
+  // garde les régularités générales (fuir, viser, se déplacer) mais perd
+  // les réflexes propres à l'ancien kit. Une réinitialisation complète
+  // serait pire — elle jetterait aussi tout ce qui est transférable.
   for (let s = 0; s < SLOTS; s++) {
-    if (rng() < 0.03) genome[s] = Math.floor(rng() * CLASSES.length)
+    if (rng() >= 0.03) continue
+    genome[s] = Math.floor(rng() * CLASSES.length)
+    const base = SLOTS + s * BRAIN_SIZE
+    // Les poids de la couche de sortie sont ceux qui encodent « quelle
+    // capacité lancer » : ce sont eux qui n'ont plus de sens. On les
+    // rebrasse le plus fort.
+    const outStart = base + INPUT_SIZE * HIDDEN + HIDDEN
+    for (let i = base; i < genome.length && i < base + BRAIN_SIZE; i++) {
+      genome[i] += gauss(rng) * (i >= outStart ? 0.6 : 0.2)
+    }
   }
   // Mutation des poids, auto-adaptative : évite les plateaux.
   const rate = 0.02 + rng() * 0.1
