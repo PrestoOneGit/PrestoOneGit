@@ -76,7 +76,7 @@ export const CLASSES = [
     dmg: 13, range: 1.9, cooldown: 1.1, speed: 4.0,
     starter: 'frappe_bouclier',
     abilities: [
-      { id: 'frappe_bouclier', label: 'Frappe de bouclier', kind: 'melee', cost: 10, cd: 4, range: 2.0, power: 22, applies: { stun: 1 } },
+      { id: 'frappe_bouclier', label: 'Frappe de bouclier', kind: 'melee', cost: 10, cd: 2.8, range: 2.0, power: 30, applies: { stun: 1 } },
       { id: 'provocation', label: 'Provocation', kind: 'taunt', cost: 16, cd: 9, range: 8, duration: 3.5 },
       { id: 'mur_garde', label: 'Mur de garde', kind: 'wall', cost: 22, cd: 14, range: 5, duration: 8, length: 3 },
       { id: 'charge', label: 'Charge', kind: 'charge', cost: 14, cd: 8, range: 8, power: 24, applies: { stun: 1 } },
@@ -92,7 +92,7 @@ export const CLASSES = [
     passive: 'rageEchoes',
     starter: 'coup_taille',
     abilities: [
-      { id: 'coup_taille', label: 'Coup de taille', kind: 'melee', cost: 8, cd: 3.2, range: 2.2, power: 48, heavy: true },
+      { id: 'coup_taille', label: 'Coup de taille', kind: 'melee', cost: 8, cd: 3.4, range: 2.2, power: 36, heavy: true },
       { id: 'fauchage', label: 'Fauchage', kind: 'selfAoe', cost: 18, cd: 6.5, radius: 3.0, power: 32, heavy: true },
       { id: 'rage_noire', label: 'Rage noire', kind: 'buffSelf', cost: 10, cd: 16, buff: 'bless', selfDamage: 0.12, extra: 'frenzy' },
       { id: 'charge_brutale', label: 'Charge brutale', kind: 'charge', cost: 16, cd: 9, range: 9, power: 30, applies: { bleed: 1 } },
@@ -106,7 +106,7 @@ export const CLASSES = [
     dmg: 16, range: 10, cooldown: 0.85, speed: 4.8,
     starter: 'tir_precis',
     abilities: [
-      { id: 'tir_precis', label: 'Tir précis', kind: 'bolt', cost: 9, cd: 2.6, range: 11, power: 34 },
+      { id: 'tir_precis', label: 'Tir précis', kind: 'bolt', cost: 9, cd: 2.6, range: 11, power: 31 },
       { id: 'fleche_perforante', label: 'Flèche perforante', kind: 'pierce', cost: 20, cd: 8, range: 12, power: 40 },
       { id: 'piege_machoires', label: 'Piège à mâchoires', kind: 'trap', cost: 16, cd: 11, range: 6, applies: { freeze: 1 }, damage: 18 },
       { id: 'roulade', label: 'Roulade', kind: 'dash', cost: 8, cd: 6, distance: 5, applies: { intangible: 0.5 } },
@@ -163,8 +163,8 @@ export const CLASSES = [
     starter: 'eclat_invocation',
     abilities: [
       { id: 'eclat_invocation', label: 'Éclat d’invocation', kind: 'bolt', cost: 8, cd: 2.4, range: 8.5, power: 24 },
-      { id: 'invoque_slime', label: 'Invoque un slime', kind: 'summon', cost: 22, cd: 9, summon: 'slime_allie', max: 2 },
-      { id: 'invoque_golem', label: 'Invoque un golem', kind: 'summon', cost: 44, cd: 20, summon: 'golem_allie', max: 1 },
+      { id: 'invoque_slime', label: 'Invoque un slime', kind: 'summon', cost: 15, cd: 7, summon: 'slime_allie', max: 2 },
+      { id: 'invoque_golem', label: 'Invoque un golem', kind: 'summon', cost: 36, cd: 20, summon: 'golem_allie', max: 1 },
       { id: 'permutation', label: 'Permutation', kind: 'swap', cost: 12, cd: 8, applies: { intangible: 0.6 } },
     ],
   },
@@ -177,7 +177,7 @@ export const CLASSES = [
     starter: 'eclat_os',
     abilities: [
       { id: 'eclat_os', label: 'Éclat d’os', kind: 'bolt', cost: 8, cd: 2.3, range: 8.5, power: 25 },
-      { id: 'lever_morts', label: 'Lever les morts', kind: 'raise', cost: 26, cd: 12, range: 7, summon: 'squelette_allie', max: 4 },
+      { id: 'lever_morts', label: 'Lever les morts', kind: 'raise', cost: 20, cd: 12, range: 7, summon: 'squelette_allie', max: 4 },
       { id: 'explosion_cadavre', label: 'Explosion de cadavre', kind: 'corpseBoom', cost: 18, cd: 6, range: 8, radius: 3.0, power: 46 },
       { id: 'linceul_os', label: 'Linceul d’os', kind: 'buffSelf', cost: 20, cd: 14, buff: 'shield', shield: 60, consumesSummons: true },
     ],
@@ -191,8 +191,8 @@ export const CLASSES = [
     starter: 'dard',
     abilities: [
       { id: 'dard', label: 'Dard', kind: 'bolt', cost: 6, cd: 1.9, range: 7.5, power: 19 },
-      { id: 'poussiere_entrain', label: 'Poussière d’entrain', kind: 'zone', cost: 28, cd: 14, range: 5, radius: 3.6, duration: 7, applies: { haste: 1 }, allies: true },
-      { id: 'chant_bravoure', label: 'Chant de bravoure', kind: 'buffTeam', cost: 24, cd: 15, buff: 'bless', range: 12 },
+      { id: 'poussiere_entrain', label: 'Poussière d’entrain', kind: 'zone', cost: 20, cd: 14, range: 5, radius: 3.6, duration: 7, applies: { haste: 1 }, allies: true },
+      { id: 'chant_bravoure', label: 'Chant de bravoure', kind: 'buffTeam', cost: 18, cd: 15, buff: 'bless', range: 12 },
       { id: 'bond_farceur', label: 'Bond farceur', kind: 'dash', cost: 10, cd: 7, distance: 6, blessAlly: true },
     ],
   },

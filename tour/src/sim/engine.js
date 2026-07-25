@@ -610,7 +610,7 @@ export class TowerRun {
     this.floorKilled++
     this.emit({ t: 'monsterDie', at: [m.x, m.z], size: m.size })
     // Cadavre exploitable par le Nécromancien et les goules.
-    this.corpses.push({ id: this.nextId++, x: m.x, z: m.z, life: 12, type: m.type })
+    this.corpses.push({ id: this.nextId++, x: m.x, z: m.z, life: 18, type: m.type })
     // Un slime se scinde ; un squelette ou une goule peut se relever.
     if (m.splitLeft > 0) {
       for (let i = 0; i < 2; i++) {
