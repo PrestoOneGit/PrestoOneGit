@@ -758,18 +758,10 @@ export class TowerRun {
     obs[k++] = this.restsLeft / RESTS_PER_RUN
     obs[k++] = this.floor % 10 === 0 ? 1 : 0
 
-    // Cartes du draft : l'agent doit VOIR ce qu'on lui propose.
+    // Cartes du draft : l'agent doit VOIR ce qu'on lui propose, et assez
+    // finement pour distinguer deux passifs différents.
     for (let i = 0; i < CARDS_PER_LEVEL; i++) {
-      const card = hero.pendingCards?.[i]
-      if (!card) {
-        for (let j = 0; j < 5; j++) obs[k++] = 0
-        continue
-      }
-      obs[k++] = card.kind === 'ability' ? 1 : 0
-      obs[k++] = card.kind === 'passive' ? 1 : 0
-      obs[k++] = card.kind === 'reinforce' ? 1 : 0
-      obs[k++] = cardOffense(card)
-      obs[k++] = cardDefense(card)
+      k = writeCard(obs, k, hero.pendingCards?.[i])
     }
     return obs
   }
@@ -1569,18 +1561,79 @@ function baseMult() {
   }
 }
 
-// Encodage grossier d'une carte pour que le réseau puisse la juger sans
-// qu'on lui apprenne ce que chaque carte fait.
-function cardOffense(card) {
-  if (card.kind === 'ability') return card.ability.power ? 1 : 0.3
-  if (card.kind === 'passive') return ['vampirisme', 'curee', 'allonge'].includes(card.passive.id) ? 1 : 0.2
-  return ['puissance', 'ampleur', 'portee_sort'].includes(card.reinf.id) ? 1 : 0.4
-}
+// Encodage d'une carte pour que le réseau puisse la JUGER — sans qu'on lui
+// apprenne laquelle est bonne.
+//
+// La version précédente résumait chaque carte à deux scores flous
+// (offense, défense). Conséquence mesurée : les dix passifs se réduisaient
+// à trois signatures seulement, donc « Célérité » et « Concentration »
+// étaient littéralement indiscernables et le choix se faisait sur la
+// position dans la liste. Les fréquences de prise étaient plates à 4 %
+// chacune — le draft ne draftait rien.
+//
+// Chaque carte est désormais projetée sur les axes de jeu qu'elle
+// modifie réellement. Les renforts partagent ces axes avec les passifs :
+// « Ampleur » et « Allonge » agissent tous deux sur la portée utile, et
+// le réseau peut l'apprendre au lieu de le deviner.
+const EFFECT_AXES = [
+  'vitesse', 'recharge', 'pv', 'mana', 'vampirisme',
+  'esquive', 'portee', 'resilience', 'curee', 'antiRalentissement',
+]
+export const CARD_EFFECTS = EFFECT_AXES.length
 
-function cardDefense(card) {
-  if (card.kind === 'ability') return ['heal', 'shieldAlly', 'wall', 'taunt', 'buffSelf'].includes(card.ability.kind) ? 1 : 0.1
-  if (card.kind === 'passive') return ['endurance', 'esquive', 'resilience', 'pas_assure'].includes(card.passive.id) ? 1 : 0.2
-  return 0.3
+// Familles de capacité : 21 natures distinctes, mais seules six comptent
+// pour décider si l'on prend la carte.
+const ABILITY_FAMILIES = [
+  ['bolt', 'melee', 'pierce'],                   // dégâts directs
+  ['aoe', 'selfAoe', 'zone', 'corpseBoom'],      // zone
+  ['heal', 'shieldAlly', 'buffSelf', 'buffTeam'],// soutien
+  ['wall', 'taunt', 'trap', 'seal'],             // contrôle et terrain
+  ['dash', 'blink', 'charge', 'swap'],           // mobilité
+  ['summon', 'raise'],                           // invocation
+]
+export const CARD_FAMILIES = ABILITY_FAMILIES.length
+
+// Un axe par passif, plus les renforts qui retombent sur les mêmes axes.
+const PASSIVE_AXIS = {
+  celerite: 0, vivacite: 1, endurance: 2, concentration: 3, vampirisme: 4,
+  esquive: 5, allonge: 6, resilience: 7, curee: 8, pas_assure: 9,
+}
+const REINFORCE_AXIS = { promptitude: 1, economie: 3, portee_sort: 6, ampleur: 6, puissance: 8 }
+
+export const CARD_STRIDE = 3 + CARD_EFFECTS + CARD_FAMILIES + 2
+
+// Écrit CARD_STRIDE valeurs dans obs à partir de k, renvoie le nouveau k.
+function writeCard(obs, k, card) {
+  const start = k
+  for (let i = 0; i < CARD_STRIDE; i++) obs[k + i] = 0
+  if (!card) return start + CARD_STRIDE
+
+  // Type de carte
+  obs[k + (card.kind === 'ability' ? 0 : card.kind === 'passive' ? 1 : 2)] = 1
+  k += 3
+
+  // Axes d'effet
+  if (card.kind === 'passive') {
+    const a = PASSIVE_AXIS[card.passive.id]
+    if (a !== undefined) obs[k + a] = 1
+  } else if (card.kind === 'reinforce') {
+    const a = REINFORCE_AXIS[card.reinf.id]
+    if (a !== undefined) obs[k + a] = 1
+  }
+  k += CARD_EFFECTS
+
+  // Famille de capacité
+  if (card.kind === 'ability') {
+    const f = ABILITY_FAMILIES.findIndex((fam) => fam.includes(card.ability.kind))
+    if (f >= 0) obs[k + f] = 1
+  }
+  k += CARD_FAMILIES
+
+  // Deux échelles continues : ce que la carte coûte et ce qu'elle frappe.
+  const ab = card.kind === 'ability' ? card.ability : card.kind === 'reinforce' ? card.target : null
+  obs[k++] = ab ? Math.min((ab.power ?? 0) / 90, 1) : 0
+  obs[k++] = ab ? Math.min((ab.cost ?? 0) / 60, 1) : 0
+  return k
 }
 
 // Fait tourner un run complet à vitesse maximale (usage worker).

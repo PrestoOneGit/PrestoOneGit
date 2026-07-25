@@ -33,6 +33,26 @@ const EMBLEMS = {
   clerc: 'halo', occultiste: 'orb', invocateur: 'orb', necromancien: 'horns', lutin: 'halo',
 }
 
+// Armes. Une par classe, tenue devant le pion, et animée quand l'attaque
+// part — c'est ce qui rend le combat lisible : on voit QUI frappe et QUAND,
+// sans lire le journal.
+//
+// `swing` décrit le geste : 'slash' balaie horizontalement, 'chop' abat
+// verticalement (les deux mains du Berserk), 'draw' tire une corde et
+// relâche, 'cast' pointe vers l'avant. `reach` est la longueur du manche,
+// `heavy` allonge le geste pour les armes lourdes.
+const WEAPONS = {
+  chevalier: { kind: 'sword', shield: true, swing: 'slash', len: 0.62, color: '#cfd4da' },
+  berserk: { kind: 'greatsword', swing: 'chop', len: 1.35, color: '#b9bec4', heavy: true },
+  archere: { kind: 'bow', swing: 'draw', len: 0.5, color: '#8a5a3b' },
+  mage: { kind: 'staff', swing: 'cast', len: 1.15, color: '#6b5540', gem: '#7ec8ff' },
+  clerc: { kind: 'mace', swing: 'chop', len: 0.66, color: '#d9c489' },
+  occultiste: { kind: 'scythe', swing: 'slash', len: 1.1, color: '#4a3f56' },
+  invocateur: { kind: 'staff', swing: 'cast', len: 1.0, color: '#3f6b63', gem: '#63e8cf' },
+  necromancien: { kind: 'staff', swing: 'cast', len: 1.1, color: '#5a5b4a', gem: '#c9ffa8', skull: true },
+  lutin: { kind: 'dagger', swing: 'slash', len: 0.34, color: '#e8d9b0' },
+}
+
 export class Tower3D {
   constructor(scene, quality = 'pions') {
     this.scene = scene
@@ -251,6 +271,107 @@ export class Tower3D {
     return g
   }
 
+  // Construit l'arme d'une classe. Le groupe rendu tourne autour de
+  // l'épaule : c'est lui qu'on anime, la géométrie reste figée.
+  makeWeapon(classId) {
+    const w = WEAPONS[classId]
+    if (!w) return null
+    const steel = new THREE.MeshStandardMaterial({ color: w.color, flatShading: true, roughness: 0.5, metalness: 0.35 })
+    const wood = new THREE.MeshStandardMaterial({ color: '#6b5540', flatShading: true, roughness: 1 })
+
+    // Le pion mesure 1,18 : la main tombe vers 0,66, pas à hauteur de tête.
+    // Le pivot est l'épaule, `arm` porte l'arme, poignée à l'origine.
+    const pivot = new THREE.Group()
+    pivot.position.set(0.33, 0.66, 0.08)
+    const arm = new THREE.Group()
+    pivot.add(arm)
+
+    const L = w.len
+    if (w.kind === 'greatsword') {
+      // Référence Guts : la lame dépasse le porteur.
+      const blade = new THREE.Mesh(this.geo('gsBlade', () => new THREE.BoxGeometry(0.19, 0.92, 0.06)), steel)
+      blade.position.y = 0.62
+      const guard = new THREE.Mesh(this.geo('gsGuard', () => new THREE.BoxGeometry(0.34, 0.07, 0.09)), steel)
+      guard.position.y = 0.17
+      const grip = new THREE.Mesh(this.geo('gsGrip', () => new THREE.CylinderGeometry(0.05, 0.055, 0.28, 5)), wood)
+      grip.position.y = 0.02
+      arm.add(blade, guard, grip)
+    } else if (w.kind === 'sword') {
+      const blade = new THREE.Mesh(this.geo('swBlade', () => new THREE.BoxGeometry(0.11, 0.5, 0.05)), steel)
+      blade.position.y = 0.34
+      const guard = new THREE.Mesh(this.geo('swGuard', () => new THREE.BoxGeometry(0.24, 0.06, 0.07)), steel)
+      guard.position.y = 0.12
+      const grip = new THREE.Mesh(this.geo('swGrip', () => new THREE.CylinderGeometry(0.042, 0.046, 0.16, 5)), wood)
+      grip.position.y = 0.02
+      arm.add(blade, guard, grip)
+    } else if (w.kind === 'dagger') {
+      const blade = new THREE.Mesh(this.geo('dgBlade', () => new THREE.ConeGeometry(0.07, 0.3, 4)), steel)
+      blade.position.y = 0.21
+      const grip = new THREE.Mesh(this.geo('dgGrip', () => new THREE.CylinderGeometry(0.04, 0.044, 0.12, 5)), wood)
+      grip.position.y = 0.02
+      arm.add(blade, grip)
+    } else if (w.kind === 'mace') {
+      const head = new THREE.Mesh(this.geo('mcHead', () => new THREE.IcosahedronGeometry(0.15, 0)), steel)
+      head.position.y = 0.46
+      const shaft = new THREE.Mesh(this.geo('mcShaft', () => new THREE.CylinderGeometry(0.042, 0.046, 0.42, 5)), wood)
+      shaft.position.y = 0.21
+      arm.add(head, shaft)
+    } else if (w.kind === 'bow') {
+      const bow = new THREE.Mesh(
+        this.geo('bwArc', () => new THREE.TorusGeometry(0.36, 0.05, 4, 12, Math.PI * 1.15)),
+        new THREE.MeshStandardMaterial({ color: w.color, flatShading: true, roughness: 1 })
+      )
+      bow.position.y = 0.26
+      bow.rotation.z = Math.PI / 2
+      const string = new THREE.Mesh(this.geo('bwString', () => new THREE.BoxGeometry(0.012, 0.6, 0.012)), steel)
+      string.position.set(0, 0.26, 0.3)
+      arm.add(bow, string)
+      arm.userData.string = string
+    } else if (w.kind === 'scythe') {
+      const shaft = new THREE.Mesh(this.geo('scShaft', () => new THREE.CylinderGeometry(0.042, 0.046, 0.82, 5)), wood)
+      shaft.position.y = 0.36
+      const blade = new THREE.Mesh(
+        this.geo('scBlade', () => new THREE.TorusGeometry(0.22, 0.05, 3, 8, Math.PI * 0.7)),
+        steel
+      )
+      blade.position.y = 0.78
+      blade.rotation.y = Math.PI / 2
+      arm.add(shaft, blade)
+    } else {
+      // Bâton : manche + gemme, éventuellement surmontée d'un crâne.
+      const shaft = new THREE.Mesh(this.geo('stShaft', () => new THREE.CylinderGeometry(0.042, 0.046, 0.86, 5)), wood)
+      shaft.position.y = 0.38
+      arm.add(shaft)
+      const gem = new THREE.Mesh(
+        this.geo('stGem', () => new THREE.IcosahedronGeometry(0.13, 0)),
+        new THREE.MeshStandardMaterial({
+          color: w.gem, emissive: w.gem, emissiveIntensity: 1.2, flatShading: true,
+        })
+      )
+      gem.position.y = 0.86
+      arm.add(gem)
+      arm.userData.gem = gem
+      if (w.skull) {
+        const skull = new THREE.Mesh(this.geo('stSkull', () => new THREE.IcosahedronGeometry(0.14, 0)),
+          new THREE.MeshStandardMaterial({ color: '#ddd6c2', flatShading: true, roughness: 1 }))
+        skull.position.y = 0.74
+        arm.add(skull)
+      }
+    }
+
+    // Bouclier du Chevalier : à l'autre main, il ne bouge pas.
+    let shield = null
+    if (w.shield) {
+      shield = new THREE.Mesh(
+        this.geo('shield', () => new THREE.BoxGeometry(0.08, 0.58, 0.44)),
+        new THREE.MeshStandardMaterial({ color: '#7c8794', flatShading: true, roughness: 0.7, metalness: 0.25 })
+      )
+      shield.position.set(-0.36, 0.62, 0.1)
+    }
+
+    return { pivot, arm, shield, spec: w }
+  }
+
   makeHeroMesh(hero) {
     const color = new THREE.Color(hero.cls.color)
     const q = this.quality
@@ -280,10 +401,25 @@ export class Tower3D {
       emblem = this.makeEmblem(hero.cls.id, mat)
       g.add(emblem)
     }
+    // L'arme n'existe qu'à partir du niveau « Pions » : en capsules, le
+    // parti pris est justement de n'avoir aucune forme lisible.
+    let weapon = null
+    if (q.lathe) {
+      weapon = this.makeWeapon(hero.cls.id)
+      if (weapon) {
+        g.add(weapon.pivot)
+        if (weapon.shield) g.add(weapon.shield)
+        weapon.pivot.castShadow = q.shadows
+      }
+    }
     const hpBar = this.makeBar(0.9, q.lathe ? 1.85 : 1.78, '#57c46a')
     const manaBar = this.makeBar(0.9, q.lathe ? 1.69 : 1.62, '#4a7fb5')
     g.add(hpBar, manaBar)
-    g.userData = { hpBar, manaBar, mat, body, emblem, baseColor: color.clone(), lunge: 0, lungeDir: [0, 0], flash: 0 }
+    g.userData = {
+      hpBar, manaBar, mat, body, emblem, weapon,
+      baseColor: color.clone(), lunge: 0, lungeDir: [0, 0], flash: 0,
+      swing: 0, // 1 → 0 pendant le geste d'attaque
+    }
     return g
   }
 
@@ -500,12 +636,23 @@ export class Tower3D {
     const flash = (mesh) => {
       if (mesh) mesh.userData.flash = 1
     }
+    // Le geste d'attaque part sur l'agent qui frappe, quel que soit le
+    // niveau de qualité : c'est lui qui rend le combat lisible.
+    const strike = (mesh) => {
+      if (mesh) mesh.userData.swing = 1
+    }
     for (const ev of this.run.events) {
       switch (ev.t) {
         case 'slash':
         case 'arrow':
         case 'bolt':
-          if (ev.from) lunge(this.nearestMesh(heroes, ev.from[0], ev.from[1]), ev.from, ev.to)
+        case 'pierce':
+        case 'chain':
+          if (ev.from) {
+            const m = this.nearestMesh(heroes, ev.from[0], ev.from[1])
+            strike(m)
+            lunge(m, ev.from, ev.to)
+          }
           flash(this.nearestMesh(monsters, ev.to[0], ev.to[1]))
           break
         case 'bite':
@@ -517,6 +664,55 @@ export class Tower3D {
           }
           break
       }
+    }
+  }
+
+  // Le geste d'attaque. `swing` descend de 1 à 0 ; on en tire une courbe
+  // en cloche pour l'armement puis la frappe. Quatre gestes distincts,
+  // choisis pour qu'on reconnaisse la classe au mouvement seul.
+  animateWeapon(mesh, dt) {
+    const w = mesh.userData.weapon
+    if (!w) return
+    const u = mesh.userData
+    if (u.swing > 0) u.swing = Math.max(0, u.swing - dt * (w.spec.heavy ? 2.4 : 4))
+
+    const p = 1 - u.swing // 0 = début du geste, 1 = fini
+    const arc = 4 * p * (1 - p) // cloche : 0 au départ, 1 au milieu, 0 à la fin
+    const arm = w.arm
+
+    switch (w.spec.swing) {
+      case 'chop': {
+        // Au repos, la lourde repose sur l'épaule, inclinée en arrière.
+        // Le geste l'arme un peu plus haut puis l'abat vers l'avant.
+        const rest = -0.55
+        w.pivot.rotation.x = rest - u.swing * 0.7 + arc * 2.1
+        w.pivot.rotation.z = 0.3 - arc * 0.3
+        w.pivot.rotation.y = 0
+        break
+      }
+      case 'slash': {
+        // Lame tenue basse et légèrement écartée ; le geste balaie devant.
+        w.pivot.rotation.x = -0.25 - arc * 0.35
+        w.pivot.rotation.z = 0.35 - arc * 0.2
+        w.pivot.rotation.y = -0.7 + arc * 1.5
+        break
+      }
+      case 'draw':
+        // Arc tenu à l'horizontale, corde tirée puis relâchée.
+        w.pivot.rotation.x = -1.35
+        w.pivot.rotation.z = 0
+        w.pivot.rotation.y = arc * 0.2
+        if (arm.userData.string) arm.userData.string.position.z = 0.3 + u.swing * 0.26
+        break
+      default:
+        // Incantation : le bâton se redresse et la gemme s'embrase.
+        w.pivot.rotation.x = -0.12 - arc * 0.9
+        w.pivot.rotation.z = 0.12
+        w.pivot.rotation.y = 0
+        if (arm.userData.gem) {
+          arm.userData.gem.material.emissiveIntensity = 1.2 + arc * 3.5
+          arm.userData.gem.scale.setScalar(1 + arc * 0.5)
+        }
     }
   }
 
@@ -715,6 +911,7 @@ export class Tower3D {
       manaBar.scale.x = Math.max(hero.mana / hero.maxMana, 0.001)
       hpBar.lookAt(camera.position)
       manaBar.lookAt(camera.position)
+      this.animateWeapon(mesh, dt)
       if (emblem?.userData.floating) {
         emblem.userData.floating.position.y = 1.36 + Math.sin(elapsed * 2 + i) * 0.06
         emblem.userData.floating.rotation.y += dt * 1.5

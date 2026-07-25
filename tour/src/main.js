@@ -374,6 +374,7 @@ function animate() {
 animate()
 
 // Accès de débogage depuis la console du navigateur
+window.__cam = { camera, controls, tower } // caméra et vue, pour inspecter de près
 window.tour = {
   get evolution() {
     return evolution
