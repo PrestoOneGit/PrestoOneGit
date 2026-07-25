@@ -64,6 +64,39 @@ npm run vallon    # Vallon        → http://localhost:5173
 Un seul à la fois sur le port 5173 (`Ctrl+C` pour arrêter). Vite recharge la
 page automatiquement à chaque modification du code.
 
+## Mettre à jour
+
+Depuis `D:\dev\PrestoOneGit` :
+
+```powershell
+git pull origin claude/life-simulation-3d-lowpoly-zzpad0
+npm run tour
+```
+
+`npm run setup` n'est à refaire que si les dépendances ont changé — le
+`git pull` te le dira en modifiant un `package.json`. Sinon, c'est inutile.
+
+Si `git pull` refuse à cause de modifications locales que tu veux garder :
+
+```powershell
+git stash
+git pull origin claude/life-simulation-3d-lowpoly-zzpad0
+git stash pop
+```
+
+**Quand les règles changent, l'ancien entraînement est refusé.** C'est
+volontaire : `SAVE_FORMAT` (dans `tour/src/ga/persistence.js`) est
+incrémenté à chaque changement de taille de réseau ou de règles, et une
+sauvegarde d'un format antérieur est écartée avec un message clair plutôt
+que reprise avec des agents devenus incohérents. L'entraînement repart de
+zéro, c'est normal. **Exporte ta session avant de mettre à jour** si tu veux
+la garder en archive (**Session → Exporter**) — elle ne sera pas
+réimportable dans la nouvelle version, mais reste lisible et rejouable avec
+la version qui l'a produite.
+
+Si l'ancienne session traîne encore dans le navigateur : **Session →
+Effacer**.
+
 ## Vérifier que l'apprentissage est réel
 
 Ces scripts ne demandent **aucune dépendance** — Node seul suffit, ils
