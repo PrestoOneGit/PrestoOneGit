@@ -3,46 +3,46 @@ AUDIT DE LA TOUR — chaque test peut échouer
 Mode complet : 30 générations, population 32, 25 graines de test
 
 1. DÉTERMINISME
-  RÉUSSI  Répétabilité — 8 exécutions du même génome/graine → fitness identique au bit près (6178.640844)
+  RÉUSSI  Répétabilité — 8 exécutions du même génome/graine → fitness identique au bit près (11263.684677)
   RÉUSSI  Entrelacement — deux runs pas-à-pas en parallèle donnent les mêmes fitness qu’isolés (buffers partagés sûrs)
   RÉUSSI  Sensibilité à la graine — 5 graines → 5 résultats distincts (la graine agit réellement)
 
 2. COMPTABILITÉ DU TRAVAIL
-  RÉUSSI  Travail par run — 1107 pas de simulation, ~4383 décisions de réseau (111 s simulées, 6 étages)
-  RÉUSSI  Coût d’une génération — 128 évaluations en 2501 ms → 19.5 ms par run (un compteur qui s’incrémenterait sans calculer coûterait ~0 ms)
+  RÉUSSI  Travail par run — 2629 pas de simulation, ~9742 décisions de réseau (263 s simulées, 9 étages)
+  RÉUSSI  Coût d’une génération — 128 évaluations en 11664 ms → 91.1 ms par run (un compteur qui s’incrémenterait sans calculer coûterait ~0 ms)
 
 3. ABLATION DES CERVEAUX
-   (évolution de référence : 30 générations, 3840 évaluations, champion gén. 22)
-  champion               n= 25  moyenne= 10215  médiane= 10470  écart-type= 1743  min=7393  max=12770
-  poids à zéro           n= 25  moyenne=    34  médiane=    34  écart-type=    1  min=31  max=38
-  poids mélangés         n= 25  moyenne=  1187  médiane=  1281  écart-type=  837  min=96  max=2749
-  RÉUSSI  Poids à zéro — champion 10215 contre 34 (p=1.32e-9) — les réseaux pilotent bien les agents
-  RÉUSSI  Poids mélangés — champion 10215 contre 1187 (p=1.34e-9) — c’est l’agencement des poids qui compte, pas leur simple présence
+   (évolution de référence : 30 générations, 3840 évaluations, champion gén. 28)
+  champion               n= 25  moyenne= 21834  médiane= 25513  écart-type= 9219  min=1221  max=35783
+  poids à zéro           n= 25  moyenne=   101  médiane=    68  écart-type=   68  min=48  max=302
+  poids mélangés         n= 25  moyenne=  5221  médiane=  5461  écart-type= 2740  min=839  max=9650
+  RÉUSSI  Poids à zéro — champion 21834 contre 101 (p=1.34e-9) — les réseaux pilotent bien les agents
+  RÉUSSI  Poids mélangés — champion 21834 contre 5221 (p=1.54e-7) — c’est l’agencement des poids qui compte, pas leur simple présence
 
 4. GÉNÉRALISATION À DES GRAINES JAMAIS VUES
-  champion (inédites)    n= 25  moyenne= 10215  médiane= 10470  écart-type= 1743  min=7393  max=12770
-  aléatoires (inédites)  n= 30  moyenne=  7994  médiane=  7952  écart-type= 1315  min=5186  max=10467
-  RÉUSSI  Généralisation — champion 10215 contre aléatoires 7994 sur 25 graines jamais vues (Mann-Whitney p=4.98e-5, permutation p=5.00e-5, taille d’effet 82%)
-  RÉUSSI  Absence de sur-apprentissage — fitness sur graines inédites = 85 % de celle sur les graines d’entraînement (10215 contre 11952)
+  champion (inédites)    n= 25  moyenne= 21834  médiane= 25513  écart-type= 9219  min=1221  max=35783
+  aléatoires (inédites)  n= 30  moyenne=  9870  médiane=  9872  écart-type= 2125  min=6548  max=15558
+  RÉUSSI  Généralisation — champion 21834 contre aléatoires 9870 sur 25 graines jamais vues (Mann-Whitney p=1.72e-6, permutation p=5.00e-5, taille d’effet 88%)
+  RÉUSSI  Absence de sur-apprentissage — fitness sur graines inédites = 72 % de celle sur les graines d’entraînement (21834 contre 30265)
 
 5. ÉVOLUTION CONTRE RECHERCHE ALÉATOIRE (budget identique)
-  essai 1/5 (1920 évaluations chacun) : évolution 11287 · aléatoire 10092
-  essai 2/5 (1920 évaluations chacun) : évolution 12015 · aléatoire 9961
-  essai 3/5 (1920 évaluations chacun) : évolution 11677 · aléatoire 10101
-  essai 4/5 (1920 évaluations chacun) : évolution 10870 · aléatoire 10607
-  essai 5/5 (1920 évaluations chacun) : évolution 11449 · aléatoire 9870
-  évolution              n=  5  moyenne= 11460  médiane= 11449  écart-type=  428  min=10870  max=12015
-  recherche aléatoire    n=  5  moyenne= 10126  médiane= 10092  écart-type=  286  min=9870  max=10607
-  RÉUSSI  Évolution > loterie — sur graines inédites : évolution 11460 contre meilleur tirage aléatoire 10126 sur 5 essais indépendants (5/5 victoires, p=9.02e-3)
+  essai 1/5 (1920 évaluations chacun) : évolution 16498 · aléatoire 11907
+  essai 2/5 (1920 évaluations chacun) : évolution 17755 · aléatoire 13545
+  essai 3/5 (1920 évaluations chacun) : évolution 13699 · aléatoire 12363
+  essai 4/5 (1920 évaluations chacun) : évolution 14438 · aléatoire 13138
+  essai 5/5 (1920 évaluations chacun) : évolution 15415 · aléatoire 12346
+  évolution              n=  5  moyenne= 15561  médiane= 15415  écart-type= 1616  min=13699  max=17755
+  recherche aléatoire    n=  5  moyenne= 12660  médiane= 12363  écart-type=  664  min=11907  max=13545
+  RÉUSSI  Évolution > loterie — sur graines inédites : évolution 15561 contre meilleur tirage aléatoire 12660 sur 5 essais indépendants (5/5 victoires, p=9.02e-3)
 
 6. CONTRÔLE NÉGATIF (évolution sans sélection)
-  avec sélection    : moyenne 7543 → 10204 (gain 2662)
-  sans sélection    : moyenne 7543 → 7688 (gain 146)
-  RÉUSSI  Sélection nécessaire — la version sélective gagne 2662 points de moyenne, la dérive pure 146 — c’est bien la sélection qui produit le progrès
-  RÉUSSI  Tendance croissante — pente de la fitness moyenne : 69.5 points par génération sur 30 générations
+  avec sélection    : moyenne 9783 → 20193 (gain 10410)
+  sans sélection    : moyenne 9783 → 11367 (gain 1583)
+  RÉUSSI  Sélection nécessaire — la version sélective gagne 10410 points de moyenne, la dérive pure 1583 — c’est bien la sélection qui produit le progrès
+  RÉUSSI  Tendance croissante — pente de la fitness moyenne : 332.5 points par génération sur 30 générations
 
 ────────────────────────────────────────────────────────────────────────
-SYNTHÈSE : 12/12 tests réussis en 502 s
+SYNTHÈSE : 12/12 tests réussis en 3000 s
   ✓ Répétabilité
   ✓ Entrelacement
   ✓ Sensibilité à la graine

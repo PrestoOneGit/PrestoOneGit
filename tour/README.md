@@ -25,10 +25,16 @@ Ou depuis ce dossier : `npm run dev`, `npm run build:single`.
 
 ## Coût de calcul
 
-Un run complet coûte **~21 ms** en JavaScript, dont **95 % en passes avant
-des réseaux** (mesuré par `audit/` — voir la note de profilage plus bas).
-La logique de jeu ne pèse que 5 % : micro-optimiser le moteur ne mènerait
-nulle part, et c'est précisément pourquoi le portage GPU est le bon levier.
+Un run complet coûte **~91 ms** en JavaScript, dont **95 % en passes avant
+des réseaux** (mesuré par `audit/`). La logique de jeu ne pèse que 5 % :
+micro-optimiser le moteur ne mènerait nulle part, et c'est précisément
+pourquoi le portage GPU est le bon levier.
+
+Le coût est passé de ~21 ms à ~91 ms avec la refonte du plateau, pour deux
+raisons qui n'en sont pas une régression : les réseaux ont grossi
+(108 → 24 → 16 contre 66 → 28 → 18), et surtout les équipes survivent
+maintenant jusqu'à l'étage 20 au lieu de mourir au 8ᵉ — elles simulent
+donc bien plus longtemps.
 
 ## Le plateau (`src/sim/terrain.js`)
 
@@ -223,6 +229,29 @@ c'est ce qu'ils ont fait — trois défauts réels ont été trouvés et corrig�
 (paysage de fitness en escalier, trop peu de graines par évaluation, export
 de session destructeur). Voir [`audit/README.md`](audit/README.md) pour le
 détail de chaque test et de chaque correction.
+
+**Dernier passage sur le plateau carré : 12 tests sur 12, en 3 000 s.**
+Sortie complète archivée dans
+[`audit/resultats-reference.txt`](audit/resultats-reference.txt).
+
+| Test | Résultat |
+|---|---|
+| Répétabilité | 8 exécutions identiques au bit près (11263.684677) |
+| Poids à zéro | champion 21 834 contre **101** — p = 1,34e-9 |
+| Poids mélangés | champion 21 834 contre **5 221** — p = 1,54e-7 |
+| Généralisation (25 graines inédites) | 21 834 contre 9 870 — p = 1,72e-6, taille d'effet **88 %** |
+| Sur-apprentissage | inédites = **72 %** de l'entraînement |
+| Évolution > loterie (budget égal) | 15 561 contre 12 660 — **5/5 victoires**, p = 9,02e-3 |
+| Contrôle négatif | avec sélection **+10 410**, sans sélection **+1 583** |
+| Tendance | **+332,5** points de fitness par génération sur 30 |
+
+Les deux derniers sont les seuls qui pouvaient réellement invalider le
+projet. « Évolution > loterie » donne 1 920 évaluations à chaque méthode,
+cinq fois de suite : si le champion n'était qu'un bon billet de loterie
+parmi beaucoup de tirages, la recherche aléatoire ferait jeu égal. Le
+contrôle négatif rejoue exactement le même algorithme en choisissant les
+parents **au hasard** au lieu des meilleurs : si le progrès venait d'un
+artefact du code plutôt que de la sélection, il apparaîtrait là aussi.
 
 ```bash
 node audit/audit.mjs                      # suite complète
