@@ -7,6 +7,8 @@
 //   — ils bloquent la LIGNE DE VUE, donc les projectiles et le ciblage.
 // Sans la seconde, un couloir ne vaut pas mieux qu'un terrain vide.
 
+import { RAY_DIRS, TURNS, len2 } from './exact.js'
+
 export const BOARD = 32 // côté du plateau, en unités de monde
 export const HALF = BOARD / 2
 export const CELL = 1 // taille d'une cellule de la grille
@@ -150,7 +152,19 @@ export class Terrain {
   buildPortals() {
     const rng = this.rng
     const count = 2 + Math.floor(rng() * 3) // 2 à 4
-    const sides = [0, 1, 2, 3].sort(() => rng() - 0.5).slice(0, count)
+    // Mélange de Fisher-Yates. Surtout PAS `sort(() => rng() - 0.5)` : ce
+    // comparateur n'est pas un ordre total, donc la norme laisse le résultat
+    // à l'implémentation — et il consomme un nombre d'appels au générateur
+    // qui dépend de l'algorithme de tri, ce qui décale tout le flux aléatoire
+    // en aval. C'était la dernière source de divergence entre moteurs.
+    const sides = [0, 1, 2, 3]
+    for (let i = sides.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1))
+      const t = sides[i]
+      sides[i] = sides[j]
+      sides[j] = t
+    }
+    sides.length = count
     for (const side of sides) {
       const along = 5 + rng() * (BOARD - 10)
       let x
@@ -200,7 +214,7 @@ export class Terrain {
       const x = (rng() - 0.5) * (BOARD - 8)
       const z = (rng() - 0.5) * (BOARD - 8)
       if (this.isWall(x, z)) continue
-      if (Math.hypot(x, z) < 5) continue // pas sur la zone de départ
+      if (len2(x, z) < 5) continue // pas sur la zone de départ
       const type = types[Math.floor(rng() * types.length)]
       this.traps.push({
         id: this.traps.length,
@@ -259,19 +273,23 @@ export class Terrain {
       entity.z += dz
       return true
     }
-    // Contournement : on fait pivoter le vecteur demandé jusqu'à trouver
-    // un passage. C'est de la mécanique de déplacement, pas de la
-    // décision — l'agent choisit toujours OÙ aller, le corps se débrouille
-    // pour longer l'obstacle. Sans ça, un agent poussant vers un coin
-    // concave y reste coincé indéfiniment, ce qu'un simple glissement sur
-    // les deux axes ne résout pas.
-    const len = Math.hypot(dx, dz)
-    if (len < 1e-6) return false
-    const base = Math.atan2(dz, dx)
-    for (const turn of [0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2]) {
-      const a = base + turn
-      const nx = entity.x + Math.cos(a) * len
-      const nz = entity.z + Math.sin(a) * len
+    // Contournement : on fait pivoter le vecteur demandé jusqu'à trouver un
+    // passage. C'est de la mécanique de déplacement, pas de la décision —
+    // l'agent choisit toujours OÙ aller, le corps se débrouille pour longer
+    // l'obstacle. Sans ça, un agent poussant vers un coin concave y reste
+    // coincé, ce qu'un simple glissement sur les deux axes ne résout pas.
+    //
+    // La déviation plafonne à un quart de tour. Au-delà, ce n'est plus
+    // longer un mur, c'est faire demi-tour : c'était la cause du
+    // tremblement (52 % des pas contre un mur repartaient à plus de 90°).
+    //
+    // Aucune trigonométrie ici : les couples (cos, sin) sont des constantes
+    // et la rotation n'est que quatre multiplications — donc identique d'un
+    // moteur JavaScript à l'autre, ce que `Math.cos` ne garantit pas.
+    if (dx * dx + dz * dz < 1e-12) return false
+    for (const [, c, s] of TURNS) {
+      const nx = entity.x + (dx * c - dz * s)
+      const nz = entity.z + (dx * s + dz * c)
       if (!this.blocked(nx, nz, radius)) {
         entity.x = nx
         entity.z = nz
@@ -296,7 +314,7 @@ export class Terrain {
       const x = (rng() - 0.5) * (BOARD - 6)
       const z = (rng() - 0.5) * (BOARD - 6)
       if (this.blocked(x, z, 0.5)) continue
-      if (Math.hypot(x, z) < minDistFromCenter) continue
+      if (len2(x, z) < minDistFromCenter) continue
       return [x, z]
     }
     return [0, 0]
@@ -318,9 +336,8 @@ export class Terrain {
   wallSensors(x, z, out, maxDist = 8) {
     const RAYS = out.length
     for (let r = 0; r < RAYS; r++) {
-      const a = (r / RAYS) * Math.PI * 2
-      const cos = Math.cos(a)
-      const sin = Math.sin(a)
+      // Directions constantes, tabulées : voir exact.js.
+      const [cos, sin] = RAY_DIRS[r]
       let d = 0.5
       while (d < maxDist) {
         if (this.isWall(x + cos * d, z + sin * d)) break

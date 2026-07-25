@@ -7,6 +7,7 @@
 // objet d'évolution : rien n'empêche 5 fois la même classe.
 
 import { CARDS_PER_LEVEL, CLASSES } from './data.js'
+import { gate, squash } from './exact.js'
 
 export const WALL_RAYS = 6
 export const ABILITY_SLOTS = 4 // un agent ne porte jamais plus de 4 capacités
@@ -72,8 +73,13 @@ export function slotClass(genome, slot) {
 
 const hidden = new Float32Array(HIDDEN)
 
-// Passe avant pour le slot s. Sorties 0-1 en tanh (déplacement signé),
-// le reste en sigmoïde (décisions et préférences).
+// Passe avant pour le slot s. Sorties 0-1 bornées dans (-1, 1) pour le
+// déplacement signé, le reste dans (0, 1) pour les décisions.
+//
+// Les activations viennent de `exact.js` : ni `Math.tanh` ni `Math.exp` ne
+// sont spécifiés au bit près par ECMAScript, et ils sont appelés ~40 000
+// fois par run. Les remplacer est ce qui rend le moteur reproductible d'un
+// navigateur à l'autre — et accessoirement plus rapide.
 export function forward(genome, slot, input, out) {
   const base = SLOTS + slot * BRAIN_SIZE
   const w1 = base
@@ -85,13 +91,13 @@ export function forward(genome, slot, input, out) {
     let sum = genome[b1 + j]
     const row = w1 + j * INPUT_SIZE
     for (let i = 0; i < INPUT_SIZE; i++) sum += genome[row + i] * input[i]
-    hidden[j] = Math.tanh(sum)
+    hidden[j] = squash(sum)
   }
   for (let k = 0; k < OUTPUT_SIZE; k++) {
     let sum = genome[b2 + k]
     const row = w2 + k * HIDDEN
     for (let j = 0; j < HIDDEN; j++) sum += genome[row + j] * hidden[j]
-    out[k] = k < 2 ? Math.tanh(sum) : 1 / (1 + Math.exp(-sum))
+    out[k] = k < 2 ? squash(sum) : gate(sum)
   }
   return out
 }

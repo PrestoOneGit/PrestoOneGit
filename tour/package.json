@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "build:single": "vite build --config vite.single.config.js",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verifier-moteurs": "node audit/verif-moteurs.mjs"
   },
   "dependencies": {
     "three": "^0.178.0"

@@ -14,6 +14,7 @@ import {
   RESTS_PER_RUN, REVIVES_PER_AGENT, STATES, SUMMONS, tierForFloor,
 } from './data.js'
 import { Terrain, BOARD, HALF } from './terrain.js'
+import { RING5, arch, len2, powInt } from './exact.js'
 import {
   ABILITY_SLOTS, INPUT_SIZE, OUTPUT_SIZE, OUT_ABILITY, OUT_BASIC, OUT_CARD,
   OUT_GATE, OUT_MOBILITY, OUT_REST, OUT_TARGET_PREF, SLOTS, WALL_RAYS,
@@ -22,6 +23,10 @@ import {
 
 export const TICK = 0.1
 export { BOARD, HALF } // le HUD et la visionneuse dimensionnent le plateau dessus
+
+// Inertie du déplacement : part de la direction demandée absorbée par tick.
+// À 0.35 et TICK = 0.1 s, un demi-tour complet prend environ une demi-seconde.
+const TURN_BLEND = 0.35
 
 export const MOBILITY = {
   dash: { distance: 4.2, cd: 5 },
@@ -114,13 +119,16 @@ export class TowerRun {
 
     this.heroes = Array.from({ length: SLOTS }, (_, s) => {
       const cls = slotClass(genome, s)
-      const a = (s / SLOTS) * Math.PI * 2
+      // Cinq positions en cercle : directions tabulées dans exact.js.
+      const [rc, rs] = RING5[s % RING5.length]
       return {
         slot: s,
         cls,
         classIndex: CLASSES.indexOf(cls),
-        x: Math.cos(a) * 2.5,
-        z: Math.sin(a) * 2.5,
+        x: rc * 2.5,
+        z: rs * 2.5,
+        headX: rc, // cap courant, lissé (voir TURN_BLEND)
+        headZ: rs,
         level: 1,
         // Le draft : on démarre avec la seule capacité de départ.
         abilities: [cls.abilities.find((ab) => ab.id === cls.starter) ?? cls.abilities[0]].map(clone),
@@ -225,9 +233,11 @@ export class TowerRun {
 
     // Les agents reprennent au centre, sur des cases libres.
     this.heroes.forEach((h, i) => {
-      const a = (i / SLOTS) * Math.PI * 2
-      h.x = Math.cos(a) * 2.5
-      h.z = Math.sin(a) * 2.5
+      const [rc, rs] = RING5[i % RING5.length]
+      h.x = rc * 2.5
+      h.z = rs * 2.5
+      h.headX = rc
+      h.headZ = rs
     })
 
     if (this.logging) {
@@ -245,7 +255,7 @@ export class TowerRun {
   spawnMonster(type, { boss = false, elite = false, at = null, summonedBy = null } = {}) {
     const t = MONSTERS[type]
     if (!t) return null
-    const scale = Math.pow(MONSTER_GROWTH, this.floor - 1)
+    const scale = powInt(MONSTER_GROWTH, this.floor - 1)
     let hp = t.hp * scale
     let dmg = t.dmg * scale
     let size = t.size
@@ -649,7 +659,7 @@ export class TowerRun {
     for (const h of this.heroes) {
       if (!h.alive) continue
       if (!includeSelf && h === hero) continue
-      const d = Math.hypot(h.x - hero.x, h.z - hero.z)
+      const d = len2(h.x - hero.x, h.z - hero.z)
       if (d > range) continue
       const score = (1 - pref) * (d / BOARD) + pref * (h.hp / h.maxHp)
       if (score < bestScore) {
@@ -806,7 +816,7 @@ export class TowerRun {
       const p = Math.min(1, 1 - hero.airborne / MOBILITY.jump.airTime)
       hero.x = hero.jumpFrom[0] + (hero.jumpTo[0] - hero.jumpFrom[0]) * p
       hero.z = hero.jumpFrom[1] + (hero.jumpTo[1] - hero.jumpFrom[1]) * p
-      hero.jumpHeight = Math.sin(p * Math.PI) * 1.6
+      hero.jumpHeight = arch(p) * 1.6
       if (hero.airborne <= 0) hero.jumpHeight = 0
       return
     }
@@ -817,7 +827,7 @@ export class TowerRun {
     const mz = out[1]
     hero.lastRestWish = out[OUT_REST]
     const pref = out[OUT_TARGET_PREF]
-    const mag = Math.min(Math.hypot(mx, mz), 1)
+    const mag = Math.min(len2(mx, mz), 1)
     const dirX = mag > 0.001 ? mx / mag : 0
     const dirZ = mag > 0.001 ? mz / mag : 0
 
@@ -850,6 +860,21 @@ export class TowerRun {
 
     // Déplacement
     if (mag > 0.05) {
+      // Inertie. Le réseau redonne une direction à chaque tick, sans mémoire
+      // du pas précédent : appliquée telle quelle, elle produit un
+      // tremblement (mesuré : 16 % des pas repartaient à plus de 90° même en
+      // terrain dégagé, 52 % contre un mur). On donne donc une masse au
+      // corps — le cap vire progressivement vers la direction demandée.
+      //
+      // C'est de la mécanique, pas de la décision : le réseau choisit
+      // toujours OÙ aller, il ne peut simplement plus pivoter sur place en
+      // un dixième de seconde.
+      hero.headX += (dirX - hero.headX) * TURN_BLEND
+      hero.headZ += (dirZ - hero.headZ) * TURN_BLEND
+      const hl = len2(hero.headX, hero.headZ)
+      const hx = hl > 0.001 ? hero.headX / hl : dirX
+      const hz = hl > 0.001 ? hero.headZ / hl : dirZ
+
       let speed = hero.cls.speed * hero.mult.speed
       if (hero.st.slow > 0 && !hero.immunities.has('slow')) speed *= STATES.slow.speedMult
       if (hero.st.haste > 0) speed *= STATES.haste.speedMult
@@ -857,10 +882,10 @@ export class TowerRun {
       const step = speed * mag * dt
       if (hero.st.intangible > 0) {
         // Intangible : traverse les murs.
-        hero.x = Math.max(-HALF + 1, Math.min(HALF - 1, hero.x + dirX * step))
-        hero.z = Math.max(-HALF + 1, Math.min(HALF - 1, hero.z + dirZ * step))
+        hero.x = Math.max(-HALF + 1, Math.min(HALF - 1, hero.x + hx * step))
+        hero.z = Math.max(-HALF + 1, Math.min(HALF - 1, hero.z + hz * step))
       } else {
-        this.terrain.move(hero, dirX * step, dirZ * step)
+        this.terrain.move(hero, hx * step, hz * step)
       }
       hero.movedThisTick = true
     }
@@ -909,7 +934,7 @@ export class TowerRun {
       if (h === hero || !h.alive) continue
       const dx = hero.x - h.x
       const dz = hero.z - h.z
-      const d = Math.hypot(dx, dz)
+      const d = len2(dx, dz)
       if (d < 0.9 && d > 0.001) {
         this.terrain.move(hero, (dx / d) * (0.9 - d) * 0.5, (dz / d) * (0.9 - d) * 0.5)
       }
@@ -919,7 +944,7 @@ export class TowerRun {
   checkTraps(entity, isHero) {
     for (const trap of this.terrain.traps) {
       if (trap.armed > 0) continue
-      if (Math.hypot(entity.x - trap.x, entity.z - trap.z) > trap.stats.radius) continue
+      if (len2(entity.x - trap.x, entity.z - trap.z) > trap.stats.radius) continue
       trap.armed = trap.stats.rearm || 0.5
       trap.triggered = true
       if (trap.stats.damage) {
@@ -969,7 +994,7 @@ export class TowerRun {
         // Tout ce qui est aligné entre l'agent et la cible, et au-delà.
         const dx = target.x - hero.x
         const dz = target.z - hero.z
-        const len = Math.hypot(dx, dz) || 1
+        const len = len2(dx, dz) || 1
         const ux = dx / len
         const uz = dz / len
         let hits = 0
@@ -1004,7 +1029,7 @@ export class TowerRun {
         commit()
         const radius = ab.radius * (hero.mult.range ?? 1)
         for (const m of this.monsters) {
-          if (Math.hypot(m.x - cx, m.z - cz) > radius) continue
+          if (len2(m.x - cx, m.z - cz) > radius) continue
           this.hurtMonster(hero, m, power, { heavy: ab.heavy })
           this.applyStates(m, ab.applies)
         }
@@ -1057,7 +1082,7 @@ export class TowerRun {
       case 'buffTeam': {
         commit()
         for (const h of this.heroes) {
-          if (!h.alive || Math.hypot(h.x - hero.x, h.z - hero.z) > range) continue
+          if (!h.alive || len2(h.x - hero.x, h.z - hero.z) > range) continue
           h.st[ab.buff] = STATES[ab.buff].duration
         }
         this.emit({ t: 'aoe', at: [hero.x, hero.z], r: range * 0.4, color: hero.cls.color, seal: true })
@@ -1090,7 +1115,7 @@ export class TowerRun {
         break
       }
       case 'raise': {
-        const near = this.corpses.filter((c) => Math.hypot(c.x - hero.x, c.z - hero.z) <= range)
+        const near = this.corpses.filter((c) => len2(c.x - hero.x, c.z - hero.z) <= range)
         if (near.length === 0) return
         const mine = this.summons.filter((s) => s.owner === hero.slot)
         const room = ab.max - mine.length
@@ -1108,7 +1133,7 @@ export class TowerRun {
         let best = null
         let bd = Infinity
         for (const c of this.corpses) {
-          const d = Math.hypot(c.x - hero.x, c.z - hero.z)
+          const d = len2(c.x - hero.x, c.z - hero.z)
           if (d > range || d >= bd) continue
           bd = d
           best = c
@@ -1116,7 +1141,7 @@ export class TowerRun {
         if (!best) return
         commit()
         for (const m of this.monsters) {
-          if (Math.hypot(m.x - best.x, m.z - best.z) > ab.radius) continue
+          if (len2(m.x - best.x, m.z - best.z) > ab.radius) continue
           this.hurtMonster(hero, m, power)
         }
         best.life = 0
@@ -1130,7 +1155,7 @@ export class TowerRun {
         // Un segment perpendiculaire à la direction de la menace.
         const dx = target.x - hero.x
         const dz = target.z - hero.z
-        const len = Math.hypot(dx, dz) || 1
+        const len = len2(dx, dz) || 1
         const px = -dz / len
         const pz = dx / len
         const midX = hero.x + (dx / len) * 2
@@ -1155,7 +1180,7 @@ export class TowerRun {
       case 'taunt': {
         let taunted = 0
         for (const m of this.monsters) {
-          if (Math.hypot(m.x - hero.x, m.z - hero.z) > range) continue
+          if (len2(m.x - hero.x, m.z - hero.z) > range) continue
           m.taunt = { hero, t: ab.duration }
           taunted++
         }
@@ -1170,7 +1195,7 @@ export class TowerRun {
         commit()
         const dx = target.x - hero.x
         const dz = target.z - hero.z
-        const len = Math.hypot(dx, dz) || 1
+        const len = len2(dx, dz) || 1
         const from = [hero.x, hero.z]
         this.terrain.move(hero, (dx / len) * (len - 1.2), (dz / len) * (len - 1.2))
         // Renverse tout ce qui se trouvait sur le trajet.
@@ -1226,7 +1251,7 @@ export class TowerRun {
         let bd = Infinity
         for (const p of this.terrain.portals) {
           if (p.sealed > 0) continue
-          const d = Math.hypot(p.x - hero.x, p.z - hero.z)
+          const d = len2(p.x - hero.x, p.z - hero.z)
           if (d > range || d >= bd) continue
           bd = d
           best = p
@@ -1272,7 +1297,7 @@ export class TowerRun {
       let bd = Infinity
       const candidates = [...this.heroes.filter((h) => h.alive), ...this.summons.filter((s) => s.hp > 0)]
       for (const h of candidates) {
-        const d = Math.hypot(h.x - m.x, h.z - m.z)
+        const d = len2(h.x - m.x, h.z - m.z)
         const score = m.stats.packHunt ? d * 0.4 + (h.hp / h.maxHp) * 18 : d
         if (score < bd) {
           bd = score
@@ -1282,7 +1307,7 @@ export class TowerRun {
     }
     if (!target) return
 
-    const dist = Math.hypot(target.x - m.x, target.z - m.z)
+    const dist = len2(target.x - m.x, target.z - m.z)
     let speed = m.stats.speed
     if (m.st.slow > 0) speed *= STATES.slow.speedMult
     if (m.st.terror > 0) speed *= 1.2
@@ -1291,7 +1316,7 @@ export class TowerRun {
     if (m.st.terror > 0) {
       const dx = m.x - target.x
       const dz = m.z - target.z
-      const l = Math.hypot(dx, dz) || 1
+      const l = len2(dx, dz) || 1
       this.moveMonster(m, (dx / l) * speed * dt, (dz / l) * speed * dt)
       return
     }
@@ -1308,7 +1333,7 @@ export class TowerRun {
           const spell = m.stats.spells[Math.floor(this.rng() * m.stats.spells.length)]
           for (const h of this.heroes) {
             if (!h.alive) continue
-            if (spell.radius > 0 && Math.hypot(h.x - target.x, h.z - target.z) > spell.radius) continue
+            if (spell.radius > 0 && len2(h.x - target.x, h.z - target.z) > spell.radius) continue
             if (spell.radius === 0 && h !== target) continue
             this.hurtHero(m, h, m.dmg * 0.8 + spell.power)
             this.applyStates(h, spell.applies)
@@ -1343,7 +1368,7 @@ export class TowerRun {
     if (isRanged && dist < m.stats.range * 0.55) {
       const dx = m.x - target.x
       const dz = m.z - target.z
-      const l = Math.hypot(dx, dz) || 1
+      const l = len2(dx, dz) || 1
       this.moveMonster(m, (dx / l) * speed * dt, (dz / l) * speed * dt)
     } else if (dist > m.stats.range) {
       const enrage = 1 + Math.max(0, this.floorTime - FLOOR_TIME_LIMIT(this.floor) * 0.7) * 0.05
@@ -1365,7 +1390,7 @@ export class TowerRun {
       if (m.stats.hitAndRun) {
         const dx = m.x - target.x
         const dz = m.z - target.z
-        const l = Math.hypot(dx, dz) || 1
+        const l = len2(dx, dz) || 1
         this.moveMonster(m, (dx / l) * 2, (dz / l) * 2)
       }
       this.emit({ t: 'bite', to: [target.x, target.z] })
@@ -1391,7 +1416,7 @@ export class TowerRun {
     let target = null
     let bd = Infinity
     for (const m of this.monsters) {
-      const d = Math.hypot(m.x - s.x, m.z - s.z)
+      const d = len2(m.x - s.x, m.z - s.z)
       if (d < bd) {
         bd = d
         target = m
@@ -1420,18 +1445,18 @@ export class TowerRun {
         z.tick = 0.5
         if (z.allies) {
           for (const h of this.heroes) {
-            if (!h.alive || Math.hypot(h.x - z.x, h.z - z.z) > z.radius) continue
+            if (!h.alive || len2(h.x - z.x, h.z - z.z) > z.radius) continue
             this.applyStates(h, z.applies)
           }
         } else {
           for (const m of this.monsters) {
-            if (Math.hypot(m.x - z.x, m.z - z.z) > z.radius) continue
+            if (len2(m.x - z.x, m.z - z.z) > z.radius) continue
             if (z.damage) this.hurtMonster(null, m, z.damage)
             this.applyStates(m, z.applies)
           }
           if (z.hostile) {
             for (const h of this.heroes) {
-              if (!h.alive || Math.hypot(h.x - z.x, h.z - z.z) > z.radius) continue
+              if (!h.alive || len2(h.x - z.x, h.z - z.z) > z.radius) continue
               this.applyStates(h, z.applies)
             }
           }
@@ -1451,7 +1476,7 @@ export class TowerRun {
       for (const o of this.monsters) {
         if (done >= chains) break
         if (o === m || o.st.shock > 0) continue
-        if (Math.hypot(o.x - m.x, o.z - m.z) > INTERACTIONS.shockChainRange) continue
+        if (len2(o.x - m.x, o.z - m.z) > INTERACTIONS.shockChainRange) continue
         o.st.shock = STATES.shock.duration * 0.7
         this.emit({ t: 'chain', from: [m.x, m.z], to: [o.x, o.z] })
         done++

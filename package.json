@@ -15,6 +15,7 @@
     "audit:rapide": "node tour/audit/audit.mjs --rapide",
     "diagnostic": "node tour/audit/diagnose-ga.mjs",
     "build": "npm --prefix tour run build:single",
-    "verifier": "node tour/audit/cross-check.mjs"
+    "verifier": "node tour/audit/cross-check.mjs",
+    "verifier-moteurs": "node tour/audit/verif-moteurs.mjs"
   }
 }
