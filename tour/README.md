@@ -323,6 +323,7 @@ artefact du code plutôt que de la sélection, il apparaîtrait là aussi.
 node audit/audit.mjs                      # suite complète
 node audit/verif-moteurs.mjs              # reproductibilité Node ↔ navigateur
 node audit/selectivite-draft.mjs          # le réseau choisit-il sa carte ?
+node audit/comportements.mjs              # formation, repos, dash, ressources
 node audit/cross-check.mjs session.json   # les chiffres du HUD, recalculés hors de l'appli
 ```
 
@@ -350,6 +351,55 @@ Remplacé par un mélange de Fisher-Yates.
 **6/6 identiques aujourd'hui.** C'est le prérequis de la phase GPU : sans
 lui, impossible de vérifier dans le navigateur ce qu'une machine louée a
 calculé.
+
+### Que font les agents, au juste ?
+
+`comportements.mjs` ne cherche pas à prouver que l'apprentissage est réel —
+c'est le travail de `audit.mjs`. Il traque les ÉCARTS entre ce que les
+agents pourraient faire et ce qu'ils font. Quelques relevés :
+
+**Ils apprennent à se regrouper, mais très lentement.** Écartement maximal
+moyen de l'équipe, sur un plateau de 32 unités de côté :
+
+| | écartement |
+|---|---|
+| équipes aléatoires | 21,8 à 29,1 |
+| champion à 30 générations | 21,1 |
+| champion à 4703 générations | **5,3** |
+
+Trente générations ne suffisent pas ; des milliers, oui. La formation
+serrée est donc une stratégie apprise, pas une propriété du moteur — et
+elle a du sens, puisque le Clerc soigne à 7,5 unités de portée.
+
+**Ils apprennent à économiser leurs repos.** Il n'y en a que trois par run.
+Le niveau de PV moyen au moment où un repos est consommé :
+
+| | PV au repos | repos pris |
+|---|---|---|
+| équipes aléatoires | 76 à 91 % | 13 à 15 |
+| champion gén. 9 | 90 % | 13 |
+| champion gén. 19 | 75 % | 1 |
+| champion gén. 29 | **51 %** | 5 |
+
+Partir d'un gaspillage à 90 % pour arriver à 51 % est une vraie discipline
+de ressource, sur une décision que rien ne rend évidente.
+
+**L'effondrement final est structurel.** Sur 7 runs, 5 voient trois agents
+tomber en moins de 60 secondes, avec un délai médian de 19 secondes entre
+la troisième mort et la dernière. Ce n'est pas la formation serrée qui est
+en cause — un champion dispersé s'effondre pareil. C'est une boucle de
+rétroaction : moins d'agents, donc moins de dégâts, donc plus de monstres
+en vie, donc plus de dégâts subis. La fin d'une run est toujours un
+effacement, jamais une usure.
+
+**Le dash sert surtout à voyager.** 70 % des dash partent sans aucun
+monstre à moins de 12 unités. Ce n'est pas une aberration : le dash donne
+4,2 unités toutes les 5 secondes, soit environ 20 % de vitesse de
+déplacement en plus. Les agents ont trouvé un usage que le kit ne
+revendiquait pas.
+
+**Un tiers du temps de combat se passe mana au plafond** (37,3 %), ce qui
+reste une ressource inexploitée.
 
 ### Le draft choisit-il vraiment ?
 
