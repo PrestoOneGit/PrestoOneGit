@@ -1,4 +1,4 @@
-import { ARENA_RADIUS } from '../sim/engine.js'
+import { HALF } from '../sim/engine.js'
 import { CLASSES } from '../sim/data.js'
 
 // Interface du tableau de bord. Trois zones de grille qui ne peuvent pas
@@ -72,12 +72,16 @@ export class HUD {
     dockToggle.addEventListener('click', () => {
       const hidden = this.ui.classList.toggle('dock-hidden')
       dockToggle.textContent = hidden ? '‹' : '›'
+      // La caméra recadre le plateau sur la zone libre : elle doit
+      // remesurer dès qu'un panneau apparaît ou disparaît.
+      window.dispatchEvent(new Event('resize'))
     })
 
     const timelineToggle = document.getElementById('toggle-timeline')
     timelineToggle.addEventListener('click', () => {
       this.ui.classList.toggle('timeline-collapsed')
       this.resizeChart()
+      window.dispatchEvent(new Event('resize'))
     })
 
     // --- Menu session ---
@@ -272,13 +276,13 @@ export class HUD {
     if (!cell) return
     const { ctx } = cell
     const size = 96
-    const scale = size / 2 / (ARENA_RADIUS + 1)
+    const scale = size / 2 / (HALF + 1)
     ctx.fillStyle = '#0d1012'
     ctx.fillRect(0, 0, size, size)
+    // Le plateau est carré : on trace son contour, pas un cercle.
     ctx.strokeStyle = 'rgba(255,255,255,0.1)'
-    ctx.beginPath()
-    ctx.arc(size / 2, size / 2, ARENA_RADIUS * scale, 0, Math.PI * 2)
-    ctx.stroke()
+    const side = HALF * 2 * scale
+    ctx.strokeRect(size / 2 - side / 2, size / 2 - side / 2, side, side)
     for (const m of snap.monsters) {
       ctx.fillStyle = m.boss ? '#cf5f55' : '#6b7d5c'
       const r = 1.5 + m.size * 1.7

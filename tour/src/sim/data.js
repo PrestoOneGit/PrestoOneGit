@@ -1,177 +1,331 @@
-// Toutes les règles du jeu sous forme de données : classes, capacités,
-// afflictions, bestiaire, paliers. Aucune logique ici — le moteur les
-// interprète. Ce format est pensé pour être exporté tel quel en JSON
+// Toutes les règles du jeu sous forme de données : états, classes,
+// capacités, bestiaire, cartes de draft. Aucune logique ici — le moteur
+// les interprète. Ce format est pensé pour être exporté tel quel en JSON
 // lors du portage du moteur vers Python/GPU.
 
-// ---- Afflictions (négatives) et buffs (positifs) ----
-// burn/poison : dégâts sur la durée. slow : -40 % vitesse. stun : aucune
-// action. vuln : +30 % dégâts subis. shield : absorbe X dégâts.
-// bless : +25 % dégâts infligés. stance : -35 % dégâts subis.
+// ─────────────────────────── ÉTATS ───────────────────────────
+// Un système unifié : toute entité (agent, monstre, invocation) porte les
+// mêmes états. `dot` = dégâts par seconde. `stacks` = cumulable.
 
-export const AFFLICTION_DURATIONS = { burn: 3, poison: 6, slow: 2.5, stun: 1.1, vuln: 5 }
-export const BURN_DPS = 5
-export const POISON_DPS_PER_STACK = 2.5
-export const POISON_MAX_STACKS = 5
-export const SLOW_FACTOR = 0.6
-export const VULN_FACTOR = 1.3
-export const BLESS_FACTOR = 1.25
-export const STANCE_FACTOR = 0.65
-export const BLESS_DURATION = 6
-export const STANCE_DURATION = 5
+export const STATES = {
+  // Négatifs
+  burn: { label: 'En feu', dot: 6, duration: 3.5, negative: true },
+  poison: { label: 'Empoisonné', dot: 2.6, duration: 6, negative: true, stacks: 5 },
+  shock: { label: 'Électrifié', dot: 4, duration: 2.5, negative: true, spreads: true },
+  freeze: { label: 'Gelé', duration: 2.2, negative: true, immobilizes: true },
+  slow: { label: 'Ralenti', duration: 2.5, negative: true, speedMult: 0.6 },
+  stun: { label: 'Étourdi', duration: 1.1, negative: true, immobilizes: true },
+  vuln: { label: 'Vulnérable', duration: 5, negative: true, incomingMult: 1.3 },
+  bleed: { label: 'Saignement', dot: 3, duration: 5, negative: true, worseWhenMoving: true },
+  terror: { label: 'Terreur', duration: 2.6, negative: true, flees: true },
+  // Positifs
+  bless: { label: 'Béni', duration: 6, outgoingMult: 1.25 },
+  haste: { label: 'Hâte', duration: 5, speedMult: 1.35, cooldownMult: 0.75 },
+  shield: { label: 'Bouclier', duration: 8, absorbs: true },
+  regen: { label: 'Régénération', duration: 6, heal: 7 },
+  stance: { label: 'Posture', duration: 5, incomingMult: 0.65 },
+  intangible: { label: 'Intangible', duration: 2.4, invulnerable: true, phases: true },
+}
 
-// ---- Capacités ----
-// target : enemy | ally | self | allies (zone autour du lanceur)
-// kind   : dmg | aoe | heal | aoeheal | buff | taunt | drain
-// applies : afflictions posées sur la/les cibles (ennemies) ; buff : sur soi/allié
+export const STATE_KEYS = Object.keys(STATES)
+
+// Interactions élémentaires. Peu nombreuses mais lisibles : c'est là que
+// naît la profondeur émergente, quand un agent apprend à geler avant de
+// frapper lourd.
+export const HEAVY_HIT_THRESHOLD = 30 // au-delà, un coup brise le gel
+
+export const INTERACTIONS = {
+  // Gelé + coup lourd → le gel se brise et le coup fait double
+  freezeShatter: { multiplier: 2 },
+  // En feu + Gelé s'annulent mutuellement
+  fireCancelsFreeze: true,
+  // Électrifié se propage à un ennemi proche ; sur une cible gelée, à deux
+  shockChainRange: 3.5,
+  shockChainOnFrozen: 2,
+  // Empoisonné + En feu → combustion toxique, dégâts du poison doublés
+  toxicCombustion: 2,
+}
+
+// ─────────────────────────── CLASSES ───────────────────────────
+// Chaque classe a quatre capacités, mais un agent n'en connaît qu'UNE au
+// départ : les autres s'obtiennent au draft. `starter` désigne celle qu'il
+// possède au niveau 1.
+//
+// Types de capacités (`kind`) interprétés par le moteur :
+//   bolt      projectile à cible unique, exige une ligne de vue
+//   melee     coup au contact
+//   aoe       zone centrée sur un point visé
+//   selfAoe   zone centrée sur le lanceur
+//   pierce    trait qui traverse tous les ennemis alignés
+//   heal / aoeHeal / shieldAlly / buffSelf / buffTeam / zone
+//   summon    invoque une créature
+//   wall      pose un mur temporaire
+//   trap      pose un piège
+//   dash / charge / blink / swap
+//   raise     relève les cadavres proches
+//   corpseBoom fait exploser un cadavre
+//   seal      ferme un portail
+//   revive    relève un allié tombé
 
 export const CLASSES = [
   {
     id: 'chevalier',
     label: 'Chevalier',
     color: '#8f9db0',
-    hp: 300, mana: 60, manaRegen: 2.2,
-    dmg: 12, range: 1.9, cooldown: 1.1, speed: 4.0,
+    hp: 320, mana: 70, manaRegen: 2.4,
+    dmg: 13, range: 1.9, cooldown: 1.1, speed: 4.0,
+    starter: 'frappe_bouclier',
     abilities: [
-      { id: 'coup_bouclier', label: 'Coup de bouclier', cost: 12, cd: 5, range: 1.9, kind: 'dmg', power: 18, applies: { stun: 1 } },
-      { id: 'provocation', label: 'Provocation', cost: 15, cd: 9, range: 8, kind: 'taunt', power: 0, duration: 3.5 },
-      { id: 'posture', label: 'Posture défensive', cost: 12, cd: 10, range: 0, kind: 'buff', buff: 'stance', target: 'self' },
+      { id: 'frappe_bouclier', label: 'Frappe de bouclier', kind: 'melee', cost: 10, cd: 4, range: 2.0, power: 22, applies: { stun: 1 } },
+      { id: 'provocation', label: 'Provocation', kind: 'taunt', cost: 16, cd: 9, range: 8, duration: 3.5 },
+      { id: 'mur_garde', label: 'Mur de garde', kind: 'wall', cost: 22, cd: 14, range: 5, duration: 8, length: 3 },
+      { id: 'charge', label: 'Charge', kind: 'charge', cost: 14, cd: 8, range: 8, power: 24, applies: { stun: 1 } },
     ],
   },
   {
-    id: 'berserker',
-    label: 'Berserker',
+    id: 'berserk',
+    label: 'Berserk',
     color: '#b0553a',
-    hp: 210, mana: 50, manaRegen: 2.0,
-    dmg: 20, range: 1.9, cooldown: 0.95, speed: 4.6,
-    // Passif : +40 % dégâts sous 35 % PV (géré par le moteur)
+    hp: 240, mana: 55, manaRegen: 2.0,
+    dmg: 24, range: 2.1, cooldown: 1.25, speed: 4.4,
+    // Passif : plus il lui manque de PV, plus il frappe fort.
+    passive: 'rageEchoes',
+    starter: 'coup_taille',
     abilities: [
-      { id: 'frappe_lourde', label: 'Frappe lourde', cost: 12, cd: 4, range: 1.9, kind: 'dmg', power: 42 },
-      { id: 'tourbillon', label: 'Tourbillon', cost: 18, cd: 7, range: 0, kind: 'aoe', power: 26, radius: 2.6, center: 'self' },
-      { id: 'cri_guerre', label: 'Cri de guerre', cost: 14, cd: 12, range: 0, kind: 'buff', buff: 'bless', target: 'self' },
+      { id: 'coup_taille', label: 'Coup de taille', kind: 'melee', cost: 8, cd: 3.2, range: 2.2, power: 48, heavy: true },
+      { id: 'fauchage', label: 'Fauchage', kind: 'selfAoe', cost: 18, cd: 6.5, radius: 3.0, power: 32, heavy: true },
+      { id: 'rage_noire', label: 'Rage noire', kind: 'buffSelf', cost: 10, cd: 16, buff: 'bless', selfDamage: 0.12, extra: 'frenzy' },
+      { id: 'charge_brutale', label: 'Charge brutale', kind: 'charge', cost: 16, cd: 9, range: 9, power: 30, applies: { bleed: 1 } },
     ],
   },
   {
     id: 'archere',
     label: 'Archère',
     color: '#7a9e64',
-    hp: 150, mana: 55, manaRegen: 2.2,
-    dmg: 15, range: 10, cooldown: 0.85, speed: 4.8,
+    hp: 155, mana: 60, manaRegen: 2.3,
+    dmg: 16, range: 10, cooldown: 0.85, speed: 4.8,
+    starter: 'tir_precis',
     abilities: [
-      { id: 'tir_precis', label: 'Tir précis', cost: 12, cd: 4, range: 11, kind: 'dmg', power: 38 },
-      { id: 'tir_handicapant', label: 'Tir handicapant', cost: 10, cd: 6, range: 10, kind: 'dmg', power: 14, applies: { slow: 1 } },
-      { id: 'pluie_fleches', label: 'Pluie de flèches', cost: 20, cd: 9, range: 9, kind: 'aoe', power: 20, radius: 2.4 },
+      { id: 'tir_precis', label: 'Tir précis', kind: 'bolt', cost: 9, cd: 2.6, range: 11, power: 34 },
+      { id: 'fleche_perforante', label: 'Flèche perforante', kind: 'pierce', cost: 20, cd: 8, range: 12, power: 40 },
+      { id: 'piege_machoires', label: 'Piège à mâchoires', kind: 'trap', cost: 16, cd: 11, range: 6, applies: { freeze: 1 }, damage: 18 },
+      { id: 'roulade', label: 'Roulade', kind: 'dash', cost: 8, cd: 6, distance: 5, applies: { intangible: 0.5 } },
     ],
   },
   {
     id: 'mage',
     label: 'Mage',
     color: '#5d93b4',
-    hp: 130, mana: 90, manaRegen: 3.0,
-    dmg: 13, range: 8.5, cooldown: 1.0, speed: 4.0,
+    hp: 135, mana: 100, manaRegen: 3.2,
+    dmg: 12, range: 9, cooldown: 1.0, speed: 4.0,
+    starter: 'light_arrow',
     abilities: [
-      { id: 'boule_feu', label: 'Boule de feu', cost: 22, cd: 5, range: 8.5, kind: 'aoe', power: 30, radius: 2.4, applies: { burn: 1 } },
-      { id: 'eclair_givre', label: 'Éclair de givre', cost: 14, cd: 4, range: 8.5, kind: 'dmg', power: 26, applies: { slow: 1 } },
-      { id: 'nova', label: 'Nova arcanique', cost: 40, cd: 14, range: 0, kind: 'aoe', power: 55, radius: 3.6, center: 'self' },
+      { id: 'light_arrow', label: 'Trait de lumière', kind: 'bolt', cost: 8, cd: 2.2, range: 9.5, power: 28 },
+      { id: 'freeze', label: 'Gel', kind: 'aoe', cost: 22, cd: 9, range: 8.5, radius: 2.2, power: 10, applies: { freeze: 1 } },
+      { id: 'explosion', label: 'Explosion', kind: 'aoe', cost: 52, cd: 15, range: 8, radius: 4.2, power: 78, applies: { burn: 1 } },
+      { id: 'shadow_step', label: 'Pas d’ombre', kind: 'blink', cost: 18, cd: 12, distance: 9, applies: { intangible: 1 } },
     ],
   },
   {
     id: 'clerc',
     label: 'Clerc',
     color: '#c9a96e',
-    hp: 170, mana: 85, manaRegen: 3.0,
-    dmg: 10, range: 7, cooldown: 1.05, speed: 4.2,
+    hp: 180, mana: 95, manaRegen: 3.2,
+    dmg: 11, range: 7.5, cooldown: 1.05, speed: 4.2,
+    starter: 'chatiment',
     abilities: [
-      { id: 'soin', label: 'Soin', cost: 16, cd: 3, range: 8, kind: 'heal', power: 45 },
-      { id: 'cercle_soin', label: 'Cercle de soin', cost: 30, cd: 10, range: 0, kind: 'aoeheal', power: 26, radius: 4.5, center: 'self' },
-      { id: 'benediction', label: 'Bénédiction', cost: 18, cd: 12, range: 8, kind: 'buff', buff: 'bless', target: 'ally' },
+      { id: 'chatiment', label: 'Châtiment', kind: 'bolt', cost: 8, cd: 2.4, range: 8, power: 24 },
+      { id: 'soin', label: 'Soin', kind: 'heal', cost: 16, cd: 3.5, range: 8, power: 52 },
+      { id: 'sanctuaire', label: 'Sanctuaire', kind: 'zone', cost: 34, cd: 16, range: 6, radius: 3.4, duration: 8, applies: { regen: 1 }, allies: true },
+      { id: 'intervention', label: 'Intervention', kind: 'shieldAlly', cost: 24, cd: 12, range: 9, shield: 70, pull: true },
     ],
   },
   {
     id: 'occultiste',
     label: 'Occultiste',
     color: '#7a5f9e',
-    hp: 145, mana: 80, manaRegen: 2.8,
-    dmg: 12, range: 8, cooldown: 1.0, speed: 4.2,
+    hp: 150, mana: 90, manaRegen: 2.9,
+    dmg: 12, range: 8.5, cooldown: 1.0, speed: 4.2,
+    starter: 'eclat_ombre',
     abilities: [
-      { id: 'malediction', label: 'Malédiction', cost: 14, cd: 6, range: 8.5, kind: 'dmg', power: 10, applies: { vuln: 1 } },
-      { id: 'nuee_toxique', label: 'Nuée toxique', cost: 20, cd: 7, range: 8, kind: 'aoe', power: 8, radius: 2.6, applies: { poison: 2 } },
-      { id: 'drain', label: 'Drain de vie', cost: 16, cd: 5, range: 7.5, kind: 'drain', power: 24 },
+      { id: 'eclat_ombre', label: 'Éclat d’ombre', kind: 'bolt', cost: 8, cd: 2.3, range: 9, power: 26 },
+      { id: 'nuee_toxique', label: 'Nuée toxique', kind: 'zone', cost: 26, cd: 11, range: 8, radius: 2.8, duration: 7, applies: { poison: 1 }, damage: 5 },
+      { id: 'malediction', label: 'Malédiction', kind: 'bolt', cost: 16, cd: 7, range: 9, power: 12, applies: { vuln: 1 }, siphon: true },
+      { id: 'sceau_scellement', label: 'Sceau de scellement', kind: 'seal', cost: 30, cd: 20, range: 10, duration: 9 },
+    ],
+  },
+  {
+    id: 'invocateur',
+    label: 'Invocateur',
+    color: '#4f9e8e',
+    hp: 145, mana: 100, manaRegen: 3.0,
+    dmg: 11, range: 8, cooldown: 1.05, speed: 4.1,
+    starter: 'eclat_invocation',
+    abilities: [
+      { id: 'eclat_invocation', label: 'Éclat d’invocation', kind: 'bolt', cost: 8, cd: 2.4, range: 8.5, power: 24 },
+      { id: 'invoque_slime', label: 'Invoque un slime', kind: 'summon', cost: 22, cd: 9, summon: 'slime_allie', max: 2 },
+      { id: 'invoque_golem', label: 'Invoque un golem', kind: 'summon', cost: 44, cd: 20, summon: 'golem_allie', max: 1 },
+      { id: 'permutation', label: 'Permutation', kind: 'swap', cost: 12, cd: 8, applies: { intangible: 0.6 } },
+    ],
+  },
+  {
+    id: 'necromancien',
+    label: 'Nécromancien',
+    color: '#6b7f5e',
+    hp: 150, mana: 95, manaRegen: 3.0,
+    dmg: 11, range: 8, cooldown: 1.05, speed: 4.1,
+    starter: 'eclat_os',
+    abilities: [
+      { id: 'eclat_os', label: 'Éclat d’os', kind: 'bolt', cost: 8, cd: 2.3, range: 8.5, power: 25 },
+      { id: 'lever_morts', label: 'Lever les morts', kind: 'raise', cost: 26, cd: 12, range: 7, summon: 'squelette_allie', max: 4 },
+      { id: 'explosion_cadavre', label: 'Explosion de cadavre', kind: 'corpseBoom', cost: 18, cd: 6, range: 8, radius: 3.0, power: 46 },
+      { id: 'linceul_os', label: 'Linceul d’os', kind: 'buffSelf', cost: 20, cd: 14, buff: 'shield', shield: 60, consumesSummons: true },
+    ],
+  },
+  {
+    id: 'lutin',
+    label: 'Lutin',
+    color: '#c98fb4',
+    hp: 120, mana: 85, manaRegen: 3.4,
+    dmg: 10, range: 7, cooldown: 0.8, speed: 5.4,
+    starter: 'dard',
+    abilities: [
+      { id: 'dard', label: 'Dard', kind: 'bolt', cost: 6, cd: 1.9, range: 7.5, power: 19 },
+      { id: 'poussiere_entrain', label: 'Poussière d’entrain', kind: 'zone', cost: 28, cd: 14, range: 5, radius: 3.6, duration: 7, applies: { haste: 1 }, allies: true },
+      { id: 'chant_bravoure', label: 'Chant de bravoure', kind: 'buffTeam', cost: 24, cd: 15, buff: 'bless', range: 12 },
+      { id: 'bond_farceur', label: 'Bond farceur', kind: 'dash', cost: 10, cd: 7, distance: 6, blessAlly: true },
     ],
   },
 ]
 
-// ---- Mobilité ----
-// Trois déplacements à cooldown, communs à toutes les classes. Le réseau
-// décide quand les déclencher ; la direction est celle qu'il demande déjà
-// pour son déplacement normal.
+export const CLASS_IDS = CLASSES.map((c) => c.id)
 
-export const MOBILITY = {
-  dash: { label: 'Dash', distance: 4.2, cd: 5, cost: 0 },
-  sprint: { label: 'Course', speedMult: 1.7, duration: 3, cd: 12, cost: 0 },
-  jump: { label: 'Bond', distance: 7, airTime: 0.45, cd: 10, cost: 0 },
-}
+// ─────────────────────────── CARTES DE DRAFT ───────────────────────────
+// À chaque niveau, trois cartes tirées au sort ; le réseau en choisit une.
+// Trois natures : une capacité de classe encore inconnue, un passif commun,
+// ou le renfort d'une capacité déjà possédée.
 
-// ---- Montée en niveau ----
-// Un niveau par étage franchi (gain passif), et un CHOIX d'amélioration
-// aux étages multiples de 5 : le réseau désigne laquelle il veut. Les
-// améliorations se cumulent — c'est la « build » de l'agent, apprise.
-
-export const UPGRADE_EVERY = 5
-
-export const UPGRADES = [
-  { id: 'vigueur', label: 'Vigueur', desc: '+18 % PV max' },
-  { id: 'puissance', label: 'Puissance', desc: '+15 % dégâts' },
-  { id: 'celerite', label: 'Célérité', desc: '+12 % vitesse, attaques plus rapides' },
-  { id: 'arcanes', label: 'Arcanes', desc: '+25 % mana et régénération' },
-  { id: 'amplification', label: 'Amplification', desc: '+20 % puissance des capacités' },
-  { id: 'resilience', label: 'Résilience', desc: '-15 % dégâts subis, afflictions écourtées' },
+export const PASSIVES = [
+  { id: 'celerite', label: 'Célérité', desc: '+14 % vitesse', mult: { speed: 1.14 } },
+  { id: 'vivacite', label: 'Vivacité', desc: '−12 % cooldowns', mult: { cooldown: 0.88 } },
+  { id: 'endurance', label: 'Endurance', desc: '+22 % PV max', mult: { hp: 1.22 } },
+  { id: 'concentration', label: 'Concentration', desc: '+30 % mana et régén', mult: { mana: 1.3 } },
+  { id: 'vampirisme', label: 'Vampirisme', desc: '8 % des dégâts soignent', lifesteal: 0.08 },
+  { id: 'esquive', label: 'Esquive', desc: '12 % de chance d’ignorer un coup', dodge: 0.12 },
+  { id: 'allonge', label: 'Allonge', desc: '+18 % portée', mult: { range: 1.18 } },
+  { id: 'resilience', label: 'Résilience', desc: 'afflictions écourtées de 30 %', mult: { afflictionDuration: 0.7 } },
+  { id: 'curee', label: 'Curée', desc: '+18 % dégâts sur cibles blessées', executeBonus: 0.18 },
+  { id: 'pas_assure', label: 'Pas assuré', desc: 'immunisé au ralentissement', immune: ['slow'] },
 ]
 
-export const UPGRADE_EFFECTS = {
-  vigueur: { hp: 1.18 },
-  puissance: { dmg: 1.15 },
-  celerite: { speed: 1.12, haste: 0.9 },
-  arcanes: { mana: 1.25 },
-  amplification: { ability: 1.2 },
-  resilience: { armor: 0.85, afflictionDuration: 0.75 },
-}
+// Renforts applicables à une capacité déjà possédée.
+export const REINFORCEMENTS = [
+  { id: 'ampleur', label: 'Ampleur', desc: '+35 % de rayon', field: 'radius', mult: 1.35, needs: 'radius' },
+  { id: 'puissance', label: 'Puissance', desc: '+30 % de puissance', field: 'power', mult: 1.3, needs: 'power' },
+  { id: 'promptitude', label: 'Promptitude', desc: '−30 % de recharge', field: 'cd', mult: 0.7 },
+  { id: 'economie', label: 'Économie', desc: '−35 % de coût en mana', field: 'cost', mult: 0.65 },
+  { id: 'portee_sort', label: 'Portée accrue', desc: '+30 % de portée', field: 'range', mult: 1.3, needs: 'range' },
+]
 
-// ---- Bestiaire ----
-// ai : melee (fonce au contact) | ranged (garde ses distances) |
-//      healer (soigne le monstre le plus blessé) | boss
-// Un scaling exponentiel par étage s'applique par-dessus (voir engine).
+export const CARDS_PER_LEVEL = 3
+export const UPGRADE_EVERY = 1 // un draft à chaque étage franchi
+
+// ─────────────────────────── BESTIAIRE ───────────────────────────
+// Dark fantasy. Chaque entrée a un comportement propre : ce ne sont pas
+// des sacs de points de vie interchangeables.
+//
+// ai : melee | ranged | healer | caster
+// Traits spéciaux interprétés par le moteur : split, revive, packHunt,
+// commands, flying, phasing, regen, webs, breaksWalls, summons.
 
 export const MONSTERS = {
-  rat: { label: 'Rat géant', hp: 30, dmg: 6, speed: 4.4, range: 1.1, cooldown: 1.0, size: 0.4, ai: 'melee', cost: 1 },
-  gobelin: { label: 'Gobelin', hp: 45, dmg: 8, speed: 3.9, range: 1.2, cooldown: 0.9, size: 0.5, ai: 'melee', cost: 2 },
-  orc: { label: 'Orc', hp: 110, dmg: 14, speed: 3.0, range: 1.5, cooldown: 1.3, size: 0.8, ai: 'melee', cost: 4 },
-  chaman: { label: 'Chaman', hp: 70, dmg: 8, speed: 3.2, range: 7, cooldown: 1.6, size: 0.6, ai: 'healer', heal: 18, cost: 5 },
-  araignee: { label: 'Araignée', hp: 60, dmg: 9, speed: 4.6, range: 1.3, cooldown: 1.0, size: 0.6, ai: 'melee', applies: { poison: 1 }, cost: 4 },
-  golem: { label: 'Golem', hp: 220, dmg: 16, speed: 2.2, range: 1.7, cooldown: 1.6, size: 1.1, ai: 'melee', armor: 0.35, cost: 7 },
-  spectre: { label: 'Spectre', hp: 80, dmg: 13, speed: 3.8, range: 6.5, cooldown: 1.4, size: 0.7, ai: 'ranged', pierceArmor: true, cost: 6 },
-  pyromant: { label: 'Pyromant', hp: 75, dmg: 12, speed: 3.0, range: 7.5, cooldown: 1.8, size: 0.65, ai: 'ranged', aoe: 2.0, applies: { burn: 1 }, cost: 7 },
-  troll: { label: 'Troll', hp: 320, dmg: 20, speed: 2.6, range: 1.8, cooldown: 1.5, size: 1.25, ai: 'melee', regen: 4, cost: 10 },
-  liche: { label: 'Liche', hp: 160, dmg: 16, speed: 2.8, range: 8, cooldown: 1.6, size: 0.9, ai: 'ranged', applies: { vuln: 1 }, cost: 11 },
+  gobelin: {
+    label: 'Gobelin', hp: 42, dmg: 8, speed: 4.0, range: 1.2, cooldown: 0.9,
+    size: 0.5, ai: 'melee', cost: 2, coward: true,
+  },
+  slime: {
+    label: 'Slime', hp: 60, dmg: 9, speed: 2.4, range: 1.2, cooldown: 1.2,
+    size: 0.6, ai: 'melee', cost: 4, split: 1,
+  },
+  squelette: {
+    label: 'Squelette', hp: 55, dmg: 11, speed: 3.4, range: 1.3, cooldown: 1.0,
+    size: 0.6, ai: 'melee', cost: 3, revive: 1,
+  },
+  loup: {
+    label: 'Loup', hp: 48, dmg: 13, speed: 5.2, range: 1.2, cooldown: 0.85,
+    size: 0.55, ai: 'melee', cost: 4, packHunt: true, applies: { bleed: 1 },
+  },
+  serpent: {
+    label: 'Serpent', hp: 40, dmg: 8, speed: 4.6, range: 1.3, cooldown: 1.1,
+    size: 0.45, ai: 'melee', cost: 3, applies: { poison: 1 }, hitAndRun: true,
+  },
+  orc: {
+    label: 'Orc', hp: 130, dmg: 16, speed: 3.0, range: 1.6, cooldown: 1.3,
+    size: 0.85, ai: 'melee', cost: 5,
+  },
+  hobgobelin: {
+    label: 'Hobgobelin', hp: 165, dmg: 18, speed: 3.2, range: 1.7, cooldown: 1.2,
+    size: 1.0, ai: 'melee', cost: 8, commands: 'gobelin',
+  },
+  chauve_souris: {
+    label: 'Chauve-souris sanguine', hp: 45, dmg: 10, speed: 5.0, range: 1.2, cooldown: 0.9,
+    size: 0.45, ai: 'melee', cost: 4, flying: true, drain: 0.6,
+  },
+  araignee: {
+    label: 'Araignée', hp: 70, dmg: 11, speed: 4.0, range: 1.4, cooldown: 1.1,
+    size: 0.65, ai: 'melee', cost: 5, webs: true, applies: { poison: 1 },
+  },
+  goule: {
+    label: 'Goule', hp: 85, dmg: 15, speed: 4.4, range: 1.4, cooldown: 1.0,
+    size: 0.7, ai: 'melee', cost: 6, revive: 1, feedsOnCorpses: true,
+  },
+  golem_pierre: {
+    label: 'Golem de pierre', hp: 280, dmg: 20, speed: 2.0, range: 1.8, cooldown: 1.7,
+    size: 1.15, ai: 'melee', cost: 9, armor: 0.4, breaksWalls: true,
+  },
+  spectre: {
+    label: 'Spectre', hp: 90, dmg: 15, speed: 3.6, range: 6.5, cooldown: 1.5,
+    size: 0.7, ai: 'ranged', cost: 7, phasing: true, pierceArmor: true,
+  },
+  troll: {
+    label: 'Troll', hp: 340, dmg: 22, speed: 2.6, range: 1.9, cooldown: 1.5,
+    size: 1.25, ai: 'melee', cost: 11, regen: 5,
+  },
+  liche: {
+    label: 'Liche', hp: 200, dmg: 17, speed: 2.6, range: 8.5, cooldown: 1.8,
+    size: 0.95, ai: 'caster', cost: 13, summons: 'squelette',
+    spells: [
+      { applies: { freeze: 1 }, radius: 2.2, power: 14 },
+      { applies: { shock: 1 }, radius: 0, power: 22 },
+    ],
+  },
 }
 
-// Boss : versions surdimensionnées avec capacité de zone périodique.
-export const BOSSES = {
-  roi_gobelin: { label: 'Roi gobelin', base: 'gobelin', hpMult: 14, dmgMult: 2.2, size: 1.3, slamCd: 7, slamRadius: 2.8, slamMult: 1.8 },
-  chef_orc: { label: 'Chef de guerre orc', base: 'orc', hpMult: 10, dmgMult: 2.0, size: 1.5, slamCd: 6.5, slamRadius: 3.0, slamMult: 1.7 },
-  matriarche: { label: 'Matriarche arachnide', base: 'araignee', hpMult: 12, dmgMult: 1.9, size: 1.5, slamCd: 6, slamRadius: 2.8, slamMult: 1.5, applies: { poison: 2 } },
-  colosse: { label: 'Colosse de pierre', base: 'golem', hpMult: 7, dmgMult: 1.8, size: 1.7, slamCd: 8, slamRadius: 3.4, slamMult: 2.0 },
-  seigneur_liche: { label: 'Seigneur liche', base: 'liche', hpMult: 9, dmgMult: 1.9, size: 1.5, slamCd: 6.5, slamRadius: 3.0, slamMult: 1.6, applies: { vuln: 1 } },
+// Créatures invoquées par les agents. Même moteur que les monstres, camp
+// opposé. Elles ne comptent PAS comme alliés pour les soins du Clerc.
+export const SUMMONS = {
+  slime_allie: {
+    label: 'Slime', hp: 70, dmg: 8, speed: 3.6, range: 1.2, cooldown: 1.0,
+    size: 0.55, color: '#4f9e8e', life: 22, applies: { slow: 1 },
+  },
+  golem_allie: {
+    label: 'Golem', hp: 220, dmg: 16, speed: 2.2, range: 1.7, cooldown: 1.5,
+    size: 1.05, color: '#5f7a72', life: 30, taunts: true,
+  },
+  squelette_allie: {
+    label: 'Squelette', hp: 55, dmg: 12, speed: 3.6, range: 1.3, cooldown: 1.0,
+    size: 0.6, color: '#a8a294', life: 18,
+  },
 }
 
-// ---- Paliers : quels monstres apparaissent à partir de quel étage ----
+// ─────────────────────────── PALIERS ───────────────────────────
 
 export const TIERS = [
-  { fromFloor: 1, pool: ['rat', 'gobelin'], boss: 'roi_gobelin', ambiance: '#dbc394' },
-  { fromFloor: 10, pool: ['gobelin', 'orc', 'chaman'], boss: 'chef_orc', ambiance: '#c9b490' },
-  { fromFloor: 25, pool: ['orc', 'chaman', 'araignee', 'golem'], boss: 'matriarche', ambiance: '#a8b09a' },
-  { fromFloor: 50, pool: ['araignee', 'golem', 'spectre', 'pyromant'], boss: 'colosse', ambiance: '#8f96a8' },
-  { fromFloor: 75, pool: ['spectre', 'pyromant', 'troll', 'chaman'], boss: 'seigneur_liche', ambiance: '#7a7290' },
-  { fromFloor: 100, pool: ['troll', 'liche', 'pyromant', 'golem'], boss: 'seigneur_liche', ambiance: '#5f5470' },
+  { fromFloor: 1, pool: ['gobelin', 'slime', 'loup'], boss: 'hobgobelin', ambiance: '#3a3630' },
+  { fromFloor: 5, pool: ['gobelin', 'squelette', 'serpent', 'araignee'], boss: 'orc', ambiance: '#38342e' },
+  { fromFloor: 12, pool: ['orc', 'goule', 'chauve_souris', 'araignee'], boss: 'golem_pierre', ambiance: '#33322f' },
+  { fromFloor: 22, pool: ['orc', 'spectre', 'golem_pierre', 'goule'], boss: 'troll', ambiance: '#2e3134' },
+  { fromFloor: 35, pool: ['spectre', 'troll', 'golem_pierre', 'liche'], boss: 'liche', ambiance: '#2b2d38' },
 ]
 
 export function tierForFloor(floor) {
@@ -180,18 +334,30 @@ export function tierForFloor(floor) {
   return tier
 }
 
-// ---- Scaling ----
-// Les héros gagnent de la puissance à chaque étage franchi (montée en
-// niveau automatique) ; les monstres grimpent un peu plus vite : le mur
-// arrive progressivement, et le repousser demande de mieux jouer.
+// ─────────────────────────── DIFFICULTÉ ───────────────────────────
+// Plus de croissance exponentielle des statistiques : c'est elle qui
+// rendait la mort mathématiquement programmée vers l'étage 10 (les
+// monstres gagnaient 5,5 % par étage contre 3,5 % pour les agents).
+// La difficulté vient désormais du NOMBRE, de la VARIÉTÉ et de la
+// CADENCE des portails — donc de problèmes tactiques, pas d'arithmétique.
 
-export const HERO_GROWTH = 1.035 // par niveau, soit par étage franchi
-export const MONSTER_GROWTH = 1.055 // par étage (PV, dégâts)
-export const FLOOR_BUDGET = (floor) => 8 + floor * 3 // points de monstres
-export const ELITE_FROM_FLOOR = 15
-export const ELITE_CHANCE = 0.18
-export const ELITE_MULT = { hp: 1.8, dmg: 1.5 }
-export const MAX_FLOOR = 100 // cap du prototype (1000 pour la phase GPU)
+// « Très léger » comme demandé : sur trente étages cela ne représente
+// qu'un facteur 1,5, à comparer au facteur 4,7 de l'ancienne courbe qui
+// rendait la mort arithmétiquement programmée.
+export const MONSTER_GROWTH = 1.014
+export const FLOOR_BUDGET = (floor) => 7 + floor * 3.4
+export const ELITE_FROM_FLOOR = 4
+export const ELITE_CHANCE = 0.22
+export const ELITE_MULT = { hp: 1.7, dmg: 1.4 }
+export const MAX_FLOOR = 100
 export const RESTS_PER_RUN = 3
-export const FLOOR_TIME_LIMIT = 45 // secondes sim par étage avant échec
-export const REGEN_BETWEEN_FLOORS = { hp: 0.25, mana: 0.5 } // fraction du manquant
+
+// Le chronomètre s'adapte au contenu de l'étage. Un plafond fixe mesurait
+// surtout la patience : un étage plein de monstres et un étage presque
+// vide avaient le même délai, et toutes les équipes finissaient par
+// « enlisement » sans qu'on puisse les départager. Il reste là uniquement
+// pour empêcher le kiting infini.
+export const FLOOR_TIME_LIMIT = (floor) => 55 + FLOOR_BUDGET(floor) * 3.2
+
+export const REGEN_BETWEEN_FLOORS = { hp: 0.3, mana: 0.6 }
+export const REVIVES_PER_AGENT = 1 // un agent tombé peut être relevé une fois

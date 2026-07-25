@@ -7,7 +7,7 @@
 const DB_NAME = 'tour-training'
 const STORE = 'sessions'
 const KEY = 'current'
-export const SAVE_FORMAT = 3
+export const SAVE_FORMAT = 4
 
 function openDb() {
   return new Promise((resolve, reject) => {

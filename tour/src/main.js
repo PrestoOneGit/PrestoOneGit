@@ -20,32 +20,35 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap
 
 const scene = new THREE.Scene()
 renderer.setClearColor('#0e1214')
-scene.fog = new THREE.Fog('#0e1214', 48, 108)
+// Le brouillard commence au-delà du coin le plus lointain du plateau
+// (32 unités de côté) : sinon la moitié arrière vire au noir.
+scene.fog = new THREE.Fog('#0e1214', 78, 190)
 
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 300)
-camera.position.set(22, 18, 22)
+camera.position.set(30, 27, 30)
 
 const controls = new OrbitControls(camera, canvas)
 controls.enableDamping = true
 controls.dampingFactor = 0.06
 controls.maxPolarAngle = Math.PI * 0.46
 controls.minDistance = 9
-controls.maxDistance = 55
+controls.maxDistance = 90
 controls.autoRotate = true
 controls.autoRotateSpeed = 0.5
 controls.target.set(0, 1, 0)
 
-const hemi = new THREE.HemisphereLight('#8a7a6a', '#3a2f28', 0.65)
+const hemi = new THREE.HemisphereLight('#9d8b78', '#4a3d33', 0.95)
 scene.add(hemi)
 
-const sunlight = new THREE.DirectionalLight('#ffd9a8', 1.5)
-sunlight.position.set(28, 40, 16)
+const sunlight = new THREE.DirectionalLight('#ffd9a8', 1.8)
+sunlight.position.set(34, 48, 20)
 sunlight.castShadow = true
 sunlight.shadow.mapSize.set(2048, 2048)
-sunlight.shadow.camera.left = -26
-sunlight.shadow.camera.right = 26
-sunlight.shadow.camera.top = 26
-sunlight.shadow.camera.bottom = -26
+// L'ombre doit couvrir la diagonale du plateau, pas seulement son côté.
+sunlight.shadow.camera.left = -30
+sunlight.shadow.camera.right = 30
+sunlight.shadow.camera.top = 30
+sunlight.shadow.camera.bottom = -30
 sunlight.shadow.camera.far = 110
 sunlight.shadow.bias = -0.0004
 scene.add(sunlight)
@@ -296,11 +299,28 @@ window.addEventListener('pagehide', () => {
 
 // ---- Boucle de rendu ----
 
+// Le canvas occupe toute la fenêtre, mais les panneaux en recouvrent les
+// bords. On décale le centre optique pour que le plateau soit cadré dans
+// la zone réellement visible, sinon il déborde sous le panneau latéral.
 function resize() {
   const w = window.innerWidth
   const h = window.innerHeight
   renderer.setSize(w, h, false)
   camera.aspect = w / h
+
+  const ui = document.getElementById('ui')
+  const box = (sel) => {
+    const el = ui?.querySelector(sel)
+    if (!el || el.offsetParent === null) return { width: 0, height: 0 }
+    return el.getBoundingClientRect()
+  }
+  const dock = ui?.classList.contains('dock-hidden') ? 0 : box('.dock').width
+  const bar = box('.bar').height
+  const strip = box('.timeline').height
+
+  // Décaler la fenêtre de rendu vers la droite/le bas fait glisser le
+  // décor vers la gauche/le haut — exactement ce qu'il faut ici.
+  camera.setViewOffset(w, h, dock / 2, (strip - bar) / 2, w, h)
   camera.updateProjectionMatrix()
 }
 window.addEventListener('resize', resize)

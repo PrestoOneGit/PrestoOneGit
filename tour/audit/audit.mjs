@@ -104,7 +104,7 @@ console.log('\n2. COMPTABILITÉ DU TRAVAIL')
   let steps = 0
   let agentTicks = 0
   while (!run.finished && steps < 500000) {
-    const before = run.heroes.filter((h) => h.alive && h.airborne <= 0 && h.aff.stun <= 0).length
+    const before = run.heroes.filter((h) => h.alive && h.airborne <= 0 && h.st.stun <= 0).length
     run.step(TICK)
     steps++
     agentTicks += before

@@ -1,9 +1,6 @@
 import * as THREE from 'three'
-import { ARENA_RADIUS } from '../sim/engine.js'
+import { BOARD, HALF } from '../sim/terrain.js'
 import { CLASSES, tierForFloor } from '../sim/data.js'
-
-const STONE = '#8a8276'
-const STONE_DARK = '#6e675c'
 
 // Niveaux de qualité — purement visuels. Le rendu se fait sur le fil
 // principal + GPU, l'évolution dans les Web Workers : changer de qualité
@@ -16,36 +13,39 @@ export const QUALITY_LEVELS = [
 ]
 
 // Profil tourné d'une pièce de jeu (socle, fût, collerette, tête).
-// LatheGeometry le fait pivoter autour de Y : x = rayon, y = hauteur.
 const PION_PROFILE = [
   [0.0, 0.0], [0.4, 0.0], [0.42, 0.06], [0.34, 0.12], [0.26, 0.18],
   [0.17, 0.3], [0.15, 0.52], [0.23, 0.62], [0.24, 0.68], [0.15, 0.74],
   [0.24, 0.86], [0.27, 0.98], [0.2, 1.1], [0.0, 1.18],
 ]
 
-// Les monstres sont des pions plus trapus et plus larges d'épaules.
 const MONSTER_PROFILE = [
   [0.0, 0.0], [0.46, 0.0], [0.48, 0.08], [0.36, 0.16], [0.28, 0.26],
   [0.34, 0.44], [0.41, 0.6], [0.35, 0.74], [0.2, 0.86], [0.0, 0.94],
 ]
 
 function latheGeometry(profile, segments) {
-  return new THREE.LatheGeometry(
-    profile.map(([x, y]) => new THREE.Vector2(x, y)),
-    segments
-  )
+  return new THREE.LatheGeometry(profile.map(([x, y]) => new THREE.Vector2(x, y)), segments)
 }
 
-// Vue 3D de l'étage courant. Les entités sont reconstruites à chaque
-// changement de qualité — comme un réglage graphique de jeu vidéo.
+const EMBLEMS = {
+  chevalier: 'crown', berserk: 'horns', archere: 'bow', mage: 'hat',
+  clerc: 'halo', occultiste: 'orb', invocateur: 'orb', necromancien: 'horns', lutin: 'halo',
+}
+
 export class Tower3D {
   constructor(scene, quality = 'pions') {
     this.scene = scene
     this.group = new THREE.Group()
     this.heroMeshes = []
     this.monsterMeshes = new Map()
+    this.summonMeshes = new Map()
+    this.corpseMeshes = new Map()
+    this.zoneMeshes = new Map()
     this.vfx = []
     this.run = null
+    this.terrainGroup = null
+    this.builtFloor = -1
     this.quality = QUALITY_LEVELS.find((q) => q.id === quality) ?? QUALITY_LEVELS[1]
     this.geoCache = new Map()
     scene.add(this.group)
@@ -61,148 +61,192 @@ export class Tower3D {
     const level = QUALITY_LEVELS.find((q) => q.id === id)
     if (!level || level === this.quality) return
     this.quality = level
-    // Les géométries dépendent du niveau : on repart d'un cache propre.
     for (const g of this.geoCache.values()) g.dispose()
     this.geoCache.clear()
+    this.builtFloor = -1
     if (this.run) this.attach(this.run)
   }
+
+  // ─── Décor fixe : le sol carré et les braseros d'angle ───
 
   buildStage() {
     const flat = (color) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 1 })
 
-    this.floorMat = flat('#dbc394')
-    const floor = new THREE.Mesh(
-      new THREE.CylinderGeometry(ARENA_RADIUS + 1.5, ARENA_RADIUS + 2.5, 1.2, 24),
-      this.floorMat
-    )
-    floor.position.y = -0.6
+    this.floorMat = flat('#4c463c')
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(BOARD, 0.8, BOARD), this.floorMat)
+    floor.position.y = -0.4
     floor.receiveShadow = true
     this.group.add(floor)
 
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(ARENA_RADIUS - 0.5, 0.09, 4, 44),
-      flat('#a89574')
-    )
-    ring.rotation.x = -Math.PI / 2
-    ring.position.y = 0.02
-    this.group.add(ring)
-
-    const segs = 22
-    for (let i = 0; i < segs; i++) {
-      const a = (i / segs) * Math.PI * 2
-      const h = 1.6 + Math.sin(i * 5.1) * 0.4
-      const block = new THREE.Mesh(new THREE.BoxGeometry(3.6, h, 1.5), flat(i % 3 ? STONE : STONE_DARK))
-      const r = ARENA_RADIUS + 3.2
-      block.position.set(Math.cos(a) * r, h / 2 - 0.1, Math.sin(a) * r)
-      block.rotation.y = -a
-      block.castShadow = true
-      block.receiveShadow = true
-      this.group.add(block)
-    }
+    // Quadrillage discret : donne l'échelle et lit les distances.
+    const grid = new THREE.GridHelper(BOARD, BOARD / 2, 0x4a4a44, 0x36362f)
+    grid.position.y = 0.01
+    grid.material.transparent = true
+    grid.material.opacity = 0.25
+    this.group.add(grid)
 
     this.flames = []
-    for (let i = 0; i < 4; i++) {
-      const a = (i / 4) * Math.PI * 2 + Math.PI / 4
-      const r = ARENA_RADIUS + 2
-      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 3.6, 6), flat(STONE_DARK))
-      pillar.position.set(Math.cos(a) * r, 1.8, Math.sin(a) * r)
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const x = sx * (HALF - 0.6)
+      const z = sz * (HALF - 0.6)
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 4.2, 6), flat('#57534a'))
+      pillar.position.set(x, 2.1, z)
       pillar.castShadow = true
       const flame = new THREE.Mesh(
         new THREE.ConeGeometry(0.38, 0.8, 6),
         new THREE.MeshStandardMaterial({
-          color: '#ff9a3c',
-          emissive: '#ff7a1c',
-          emissiveIntensity: 1.6,
-          flatShading: true,
+          color: '#ff9a3c', emissive: '#ff7a1c', emissiveIntensity: 1.6, flatShading: true,
         })
       )
-      flame.position.set(Math.cos(a) * r, 4.0, Math.sin(a) * r)
+      flame.position.set(x, 4.5, z)
       flame.userData.flicker = Math.random() * Math.PI * 2
       this.flames.push(flame)
       this.group.add(pillar, flame)
     }
   }
 
-  makeBar(width, y, color) {
-    const bar = new THREE.Mesh(
-      new THREE.BoxGeometry(width, 0.08, 0.08),
-      new THREE.MeshBasicMaterial({ color })
-    )
-    bar.position.y = y
-    return bar
+  // ─── Terrain de l'étage : murs, portails, pièges ───
+  // Reconstruit à chaque changement d'étage. Les murs sont fusionnés en
+  // un seul maillage instancié : une grille de 32×32 rendue en objets
+  // séparés coûterait cher pour rien.
+
+  buildTerrain(terrain) {
+    if (this.terrainGroup) {
+      this.group.remove(this.terrainGroup)
+      this.terrainGroup.traverse((o) => {
+        if (o.geometry) o.geometry.dispose()
+        if (o.material?.dispose) o.material.dispose()
+      })
+    }
+    const g = new THREE.Group()
+
+    // Murs
+    const cells = []
+    for (let cz = 0; cz < BOARD; cz++) {
+      for (let cx = 0; cx < BOARD; cx++) {
+        if (terrain.grid[cz * BOARD + cx] === 1) cells.push([cx, cz])
+      }
+    }
+    if (cells.length) {
+      const wallMat = new THREE.MeshStandardMaterial({ color: '#5c5850', flatShading: true, roughness: 0.95 })
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 2.4, 1), wallMat, cells.length)
+      mesh.castShadow = this.quality.shadows
+      mesh.receiveShadow = true
+      const m = new THREE.Matrix4()
+      const color = new THREE.Color()
+      cells.forEach(([cx, cz], i) => {
+        const [x, z] = terrain.centerOf(cz * BOARD + cx)
+        // Bordure plus sombre que les obstacles intérieurs : on lit tout
+        // de suite où sont les limites du plateau.
+        // Les obstacles intérieurs restent plus bas que la bordure : ils
+        // bloquent la vue des agents, pas celle du spectateur.
+        const edge = cx === 0 || cz === 0 || cx === BOARD - 1 || cz === BOARD - 1
+        m.makeTranslation(x, edge ? 1.5 : 0.95, z)
+        m.scale(new THREE.Vector3(1, edge ? 1.25 : 0.79, 1))
+        mesh.setMatrixAt(i, m)
+        color.set(edge ? '#413e38' : '#68635a')
+        mesh.setColorAt(i, color)
+      })
+      mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+      g.add(mesh)
+    }
+
+    // Portails
+    this.portalMeshes = []
+    for (const p of terrain.portals) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.0, 0.14, 6, 18),
+        new THREE.MeshStandardMaterial({
+          color: '#8a5fd4', emissive: '#6b3fbf', emissiveIntensity: 1.1, flatShading: true,
+        })
+      )
+      ring.position.set(p.x, 1.2, p.z)
+      ring.rotation.x = Math.PI / 2
+      const core = new THREE.Mesh(
+        new THREE.CircleGeometry(0.95, 14),
+        new THREE.MeshBasicMaterial({ color: '#2a1a4a', transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+      )
+      core.position.set(p.x, 1.2, p.z)
+      core.rotation.x = -Math.PI / 2
+      g.add(ring, core)
+      this.portalMeshes.push({ portal: p, ring, core })
+    }
+
+    // Pièges : les cachés ne sont PAS dessinés — l'agent ne les voit pas
+    // dans ses observations, l'observateur non plus.
+    this.trapMeshes = []
+    for (const t of terrain.traps) {
+      if (!t.stats.visible) continue
+      const color = t.type === 'goudron' ? '#2f2a22' : '#8a6a3c'
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(t.stats.radius, 12),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+      )
+      disc.position.set(t.x, 0.05, t.z)
+      disc.rotation.x = -Math.PI / 2
+      g.add(disc)
+      this.trapMeshes.push({ trap: t, disc })
+    }
+
+    this.group.add(g)
+    this.terrainGroup = g
+    this.builtFloor = terrain.floor
+    this.tempWallMeshes = new Map()
   }
 
-  // Emblème posé sur la tête du pion : signature visuelle de la classe.
+  // ─── Entités ───
+
   makeEmblem(classId, mat) {
-    const metal = new THREE.MeshStandardMaterial({
-      color: '#d8d2c4', flatShading: true, roughness: 0.45, metalness: 0.2,
-    })
+    const kind = EMBLEMS[classId] ?? 'orb'
+    const metal = new THREE.MeshStandardMaterial({ color: '#d8d2c4', flatShading: true, roughness: 0.45, metalness: 0.2 })
     const g = new THREE.Group()
-    switch (classId) {
-      case 'chevalier': {
-        // Couronne crénelée
-        const ring = new THREE.Mesh(this.geo('crown', () => new THREE.CylinderGeometry(0.19, 0.21, 0.1, 8)), metal)
-        ring.position.y = 1.22
-        g.add(ring)
-        for (let i = 0; i < 4; i++) {
-          const a = (i / 4) * Math.PI * 2
-          const spike = new THREE.Mesh(this.geo('crownSpike', () => new THREE.ConeGeometry(0.05, 0.14, 4)), metal)
-          spike.position.set(Math.cos(a) * 0.16, 1.33, Math.sin(a) * 0.16)
-          g.add(spike)
-        }
-        break
+    if (kind === 'crown') {
+      const ring = new THREE.Mesh(this.geo('crown', () => new THREE.CylinderGeometry(0.19, 0.21, 0.1, 8)), metal)
+      ring.position.y = 1.22
+      g.add(ring)
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2
+        const spike = new THREE.Mesh(this.geo('crownSpike', () => new THREE.ConeGeometry(0.05, 0.14, 4)), metal)
+        spike.position.set(Math.cos(a) * 0.16, 1.33, Math.sin(a) * 0.16)
+        g.add(spike)
       }
-      case 'berserker': {
-        // Deux cornes
-        for (const side of [-1, 1]) {
-          const horn = new THREE.Mesh(this.geo('horn', () => new THREE.ConeGeometry(0.07, 0.32, 5)), metal)
-          horn.position.set(side * 0.15, 1.3, 0)
-          horn.rotation.z = side * 0.5
-          g.add(horn)
-        }
-        break
+    } else if (kind === 'horns') {
+      for (const side of [-1, 1]) {
+        const horn = new THREE.Mesh(this.geo('horn', () => new THREE.ConeGeometry(0.07, 0.32, 5)), metal)
+        horn.position.set(side * 0.15, 1.3, 0)
+        horn.rotation.z = side * 0.5
+        g.add(horn)
       }
-      case 'archere': {
-        // Arc dressé
-        const bow = new THREE.Mesh(
-          this.geo('bow', () => new THREE.TorusGeometry(0.22, 0.035, 4, 12, Math.PI * 1.2)),
-          new THREE.MeshStandardMaterial({ color: '#8a5a3b', flatShading: true, roughness: 1 })
-        )
-        bow.position.y = 1.32
-        bow.rotation.y = Math.PI / 2
-        bow.rotation.z = -0.3
-        g.add(bow)
-        break
-      }
-      case 'mage': {
-        // Chapeau pointu
-        const hat = new THREE.Mesh(this.geo('hat', () => new THREE.ConeGeometry(0.24, 0.46, 7)), mat)
-        hat.position.y = 1.38
-        g.add(hat)
-        break
-      }
-      case 'clerc': {
-        // Auréole
-        const halo = new THREE.Mesh(
-          this.geo('halo', () => new THREE.TorusGeometry(0.2, 0.035, 4, 14)),
-          new THREE.MeshStandardMaterial({ color: '#ffe9a3', emissive: '#e8c96a', emissiveIntensity: 0.9, flatShading: true })
-        )
-        halo.rotation.x = Math.PI / 2
-        halo.position.y = 1.34
-        g.add(halo)
-        break
-      }
-      case 'occultiste': {
-        // Orbe flottante
-        const orb = new THREE.Mesh(
-          this.geo('orb', () => new THREE.IcosahedronGeometry(0.13, 0)),
-          new THREE.MeshStandardMaterial({ color: '#b78fe0', emissive: '#7a5f9e', emissiveIntensity: 1.1, flatShading: true })
-        )
-        orb.position.y = 1.36
-        g.add(orb)
-        g.userData.floating = orb
-        break
-      }
+    } else if (kind === 'bow') {
+      const bow = new THREE.Mesh(
+        this.geo('bow', () => new THREE.TorusGeometry(0.22, 0.035, 4, 12, Math.PI * 1.2)),
+        new THREE.MeshStandardMaterial({ color: '#8a5a3b', flatShading: true, roughness: 1 })
+      )
+      bow.position.y = 1.32
+      bow.rotation.y = Math.PI / 2
+      bow.rotation.z = -0.3
+      g.add(bow)
+    } else if (kind === 'hat') {
+      const hat = new THREE.Mesh(this.geo('hat', () => new THREE.ConeGeometry(0.24, 0.46, 7)), mat)
+      hat.position.y = 1.38
+      g.add(hat)
+    } else if (kind === 'halo') {
+      const halo = new THREE.Mesh(
+        this.geo('halo', () => new THREE.TorusGeometry(0.2, 0.035, 4, 14)),
+        new THREE.MeshStandardMaterial({ color: '#ffe9a3', emissive: '#e8c96a', emissiveIntensity: 0.9, flatShading: true })
+      )
+      halo.rotation.x = Math.PI / 2
+      halo.position.y = 1.34
+      g.add(halo)
+    } else {
+      const orb = new THREE.Mesh(
+        this.geo('orb', () => new THREE.IcosahedronGeometry(0.13, 0)),
+        new THREE.MeshStandardMaterial({ color: '#b78fe0', emissive: '#7a5f9e', emissiveIntensity: 1.1, flatShading: true })
+      )
+      orb.position.y = 1.36
+      g.add(orb)
+      g.userData.floating = orb
     }
     return g
   }
@@ -211,22 +255,16 @@ export class Tower3D {
     const color = new THREE.Color(hero.cls.color)
     const q = this.quality
     const mat = new THREE.MeshStandardMaterial({
-      color,
-      flatShading: true,
-      roughness: q.lathe ? 0.55 : 0.75,
-      metalness: q.lathe ? 0.15 : 0,
-      emissive: color,
-      emissiveIntensity: q.id === 'deluxe' ? 0.18 : 0.12,
+      color, flatShading: true, roughness: 0.75, metalness: q.lathe ? 0.15 : 0,
+      emissive: color, emissiveIntensity: 0.14,
     })
     const g = new THREE.Group()
-
     let body
     if (q.lathe) {
       body = new THREE.Mesh(this.geo('pion', () => latheGeometry(PION_PROFILE, 12)), mat)
-      // Socle sombre : le pion se détache du sol
       const base = new THREE.Mesh(
         this.geo('pionBase', () => new THREE.CylinderGeometry(0.44, 0.5, 0.07, 12)),
-        new THREE.MeshStandardMaterial({ color: '#3a332c', flatShading: true, roughness: 0.9 })
+        new THREE.MeshStandardMaterial({ color: '#26231f', flatShading: true, roughness: 0.9 })
       )
       base.position.y = 0.035
       g.add(base)
@@ -242,37 +280,37 @@ export class Tower3D {
       emblem = this.makeEmblem(hero.cls.id, mat)
       g.add(emblem)
     }
-
     const hpBar = this.makeBar(0.9, q.lathe ? 1.85 : 1.78, '#57c46a')
-    const manaBar = this.makeBar(0.9, q.lathe ? 1.69 : 1.62, '#5d93d4')
+    const manaBar = this.makeBar(0.9, q.lathe ? 1.69 : 1.62, '#4a7fb5')
     g.add(hpBar, manaBar)
     g.userData = { hpBar, manaBar, mat, body, emblem, baseColor: color.clone(), lunge: 0, lungeDir: [0, 0], flash: 0 }
     return g
   }
 
+  makeBar(width, y, color) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, 0.08), new THREE.MeshBasicMaterial({ color }))
+    bar.position.y = y
+    return bar
+  }
+
   makeMonsterMesh(m) {
     const q = this.quality
     const color = m.boss ? '#7a3c3c' : m.elite ? '#8f6e3c' : '#6e8557'
-    const mat = new THREE.MeshStandardMaterial({
-      color, flatShading: true, roughness: 0.9, metalness: q.lathe ? 0.1 : 0,
-    })
+    const mat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9 })
     const g = new THREE.Group()
     const s = m.size
-
     let body
     if (q.lathe) {
       body = new THREE.Mesh(this.geo('mpion', () => latheGeometry(MONSTER_PROFILE, 9)), mat)
       body.scale.setScalar(0.85 + s * 0.55)
     } else {
       body = new THREE.Mesh(
-        this.geo(`mcap${s.toFixed(2)}`, () => new THREE.CapsuleGeometry(0.3 * (0.9 + s), 0.4 * (0.7 + s), 3, 7)),
-        mat
+        this.geo(`mcap${s.toFixed(2)}`, () => new THREE.CapsuleGeometry(0.3 * (0.9 + s), 0.4 * (0.7 + s), 3, 7)), mat
       )
       body.position.y = 0.55 * (0.7 + s)
     }
     body.castShadow = q.shadows
     g.add(body)
-
     if (m.boss || m.elite) {
       const crown = new THREE.Mesh(
         this.geo('mcrown', () => new THREE.ConeGeometry(0.16, 0.3, 5)),
@@ -281,21 +319,42 @@ export class Tower3D {
       crown.position.y = (q.lathe ? 0.95 : 1.2) * s + 0.75
       g.add(crown)
     }
-
     const hpBar = this.makeBar(0.8 * (0.7 + s * 0.5), (q.lathe ? 1.05 : 1.2) * s + 0.95, '#d1584a')
     g.add(hpBar)
-    g.userData = { hpBar, mat, body, baseColor: new THREE.Color(color), lunge: 0, lungeDir: [0, 0], flash: 0 }
+    g.userData = { hpBar, mat, body, baseColor: new THREE.Color(color), bodyScale: body.scale.x, lunge: 0, lungeDir: [0, 0], flash: 0 }
+    return g
+  }
+
+  makeSummonMesh(s) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: s.spec.color, flatShading: true, roughness: 0.8,
+      emissive: s.spec.color, emissiveIntensity: 0.35, transparent: true, opacity: 0.85,
+    })
+    const g = new THREE.Group()
+    const body = new THREE.Mesh(
+      this.geo(`sum${s.spec.size.toFixed(2)}`, () => new THREE.IcosahedronGeometry(0.36 * (0.8 + s.spec.size), 0)),
+      mat
+    )
+    body.position.y = 0.4 * (0.8 + s.spec.size)
+    body.castShadow = this.quality.shadows
+    g.add(body)
+    const hpBar = this.makeBar(0.6, 1.1 * s.spec.size + 0.6, '#7fd4c4')
+    g.add(hpBar)
+    g.userData = { hpBar, mat, body }
     return g
   }
 
   attach(run) {
     for (const m of this.heroMeshes) this.group.remove(m)
-    for (const [, m] of this.monsterMeshes) this.group.remove(m)
+    for (const map of [this.monsterMeshes, this.summonMeshes, this.corpseMeshes, this.zoneMeshes]) {
+      for (const [, m] of map) this.group.remove(m)
+      map.clear()
+    }
     for (const v of this.vfx) this.group.remove(v.mesh)
     this.heroMeshes = []
-    this.monsterMeshes.clear()
     this.vfx = []
     this.run = run
+    this.builtFloor = -1
     for (const hero of run.heroes) {
       const mesh = this.makeHeroMesh(hero)
       this.heroMeshes.push(mesh)
@@ -303,9 +362,109 @@ export class Tower3D {
     }
   }
 
-  // ---- Réactions aux coups (qualité Deluxe) ----
-  // Le moteur reste intact : on retrouve les entités touchées par leur
-  // position dans les événements, côté vue uniquement.
+  // ─── Effets ───
+
+  makeSeal(radius, color) {
+    const g = new THREE.Group()
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
+    g.userData.materials = [mat]
+    const outer = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 3, 40), mat)
+    outer.rotation.x = -Math.PI / 2
+    const inner = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.022, 3, 32), mat)
+    inner.rotation.x = -Math.PI / 2
+    g.add(outer, inner)
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      const tick = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.05), mat)
+      tick.position.set(Math.cos(a) * 0.81, 0, Math.sin(a) * 0.81)
+      tick.rotation.y = -a
+      g.add(tick)
+    }
+    const tri = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.02, 3, 3), mat)
+    tri.rotation.x = -Math.PI / 2
+    g.add(tri)
+    g.scale.setScalar(radius)
+    return g
+  }
+
+  spawnVfx(kind, from, to, { radius = 1, color = '#fff4dd' } = {}) {
+    let mesh
+    let life = 0.3
+    const basic = (c, size = 0.15) =>
+      new THREE.Mesh(new THREE.IcosahedronGeometry(size, 0), new THREE.MeshBasicMaterial({ color: c }))
+
+    switch (kind) {
+      case 'arrow':
+        mesh = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.5, 4), new THREE.MeshBasicMaterial({ color: '#e8dcc0' }))
+        life = 0.2
+        break
+      case 'bolt':
+        mesh = basic(color)
+        life = 0.22
+        break
+      case 'chain':
+        mesh = basic('#9fd8ff', 0.12)
+        life = 0.18
+        break
+      case 'seal':
+        mesh = this.makeSeal(radius, color)
+        life = 0.85
+        break
+      case 'pierce': {
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.1, 0.1, 1),
+          new THREE.MeshBasicMaterial({ color: '#e8dcc0', transparent: true })
+        )
+        life = 0.3
+        break
+      }
+      case 'trail':
+        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.5), new THREE.MeshBasicMaterial({ color, transparent: true }))
+        life = 0.35
+        break
+      case 'aoe':
+      case 'taunt':
+      case 'zoneRing':
+        mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(0.4, 0.07, 4, 20),
+          new THREE.MeshBasicMaterial({ color: kind === 'taunt' ? '#e8c96a' : color, transparent: true })
+        )
+        mesh.rotation.x = -Math.PI / 2
+        life = 0.45
+        break
+      case 'heal':
+      case 'buff':
+      case 'shield':
+        mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(0.3, 0.05, 4, 12),
+          new THREE.MeshBasicMaterial({ color: kind === 'heal' ? '#8fe89a' : color, transparent: true })
+        )
+        mesh.rotation.x = -Math.PI / 2
+        life = 0.5
+        break
+      case 'die':
+        mesh = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.4, 0),
+          new THREE.MeshBasicMaterial({ color: '#c9c2b4', transparent: true })
+        )
+        life = 0.4
+        break
+      case 'shatter':
+        mesh = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.5, 0),
+          new THREE.MeshBasicMaterial({ color: '#9fd8ff', transparent: true, wireframe: true })
+        )
+        life = 0.35
+        break
+      default:
+        mesh = basic(kind === 'bite' ? '#d1584a' : '#fff4dd', 0.13)
+        life = 0.15
+    }
+    const grounded = ['aoe', 'taunt', 'seal', 'trail', 'zoneRing'].includes(kind)
+    mesh.position.set(from[0], grounded ? 0.12 : 0.9, from[1])
+    this.group.add(mesh)
+    this.vfx.push({ mesh, kind, life, maxLife: life, from, to, radius })
+  }
 
   nearestMesh(list, x, z, maxDist = 1.4) {
     let best = null
@@ -320,7 +479,8 @@ export class Tower3D {
     return best
   }
 
-  entityIndex() {
+  reactToHits() {
+    if (!this.quality.hitFx) return
     const heroes = this.run.heroes
       .map((h, i) => ({ mesh: this.heroMeshes[i], ex: h.x, ez: h.z }))
       .filter((e) => e.mesh)
@@ -329,13 +489,6 @@ export class Tower3D {
       const mesh = this.monsterMeshes.get(m.id)
       if (mesh) monsters.push({ mesh, ex: m.x, ez: m.z })
     }
-    return { heroes, monsters }
-  }
-
-  reactToHits() {
-    if (!this.quality.hitFx) return
-    const { heroes, monsters } = this.entityIndex()
-
     const lunge = (mesh, from, to) => {
       if (!mesh) return
       const dx = to[0] - from[0]
@@ -347,36 +500,22 @@ export class Tower3D {
     const flash = (mesh) => {
       if (mesh) mesh.userData.flash = 1
     }
-
     for (const ev of this.run.events) {
       switch (ev.t) {
         case 'slash':
         case 'arrow':
-        case 'cast':
+        case 'bolt':
           if (ev.from) lunge(this.nearestMesh(heroes, ev.from[0], ev.from[1]), ev.from, ev.to)
           flash(this.nearestMesh(monsters, ev.to[0], ev.to[1]))
-          break
-        case 'drain':
-          flash(this.nearestMesh(monsters, ev.from[0], ev.from[1]))
           break
         case 'bite':
           flash(this.nearestMesh(heroes, ev.to[0], ev.to[1]))
           break
-        case 'slam':
-          for (const e of heroes) {
+        case 'aoe':
+          for (const e of monsters) {
             if (Math.hypot(e.ex - ev.at[0], e.ez - ev.at[1]) <= ev.r) flash(e.mesh)
           }
           break
-        case 'aoe': {
-          // Zone rouge = attaque de monstre sur les héros ; zone verte =
-          // soin (pas de flash) ; sinon zone de héros sur les monstres.
-          if (ev.color === '#8fe89a') break
-          const targets = ev.color === '#d1584a' ? heroes : monsters
-          for (const e of targets) {
-            if (Math.hypot(e.ex - ev.at[0], e.ez - ev.at[1]) <= ev.r) flash(e.mesh)
-          }
-          break
-        }
       }
     }
   }
@@ -388,7 +527,6 @@ export class Tower3D {
     let offZ = 0
     if (u.lunge > 0) {
       u.lunge = Math.max(0, u.lunge - dt * 5)
-      // Aller-retour : pic à mi-parcours
       const p = Math.sin(u.lunge * Math.PI)
       offX = u.lungeDir[0] * p * 0.35
       offZ = u.lungeDir[1] * p * 0.35
@@ -398,7 +536,7 @@ export class Tower3D {
       u.mat.emissive.copy(u.baseColor).lerp(new THREE.Color('#ffffff'), u.flash * 0.9)
       u.mat.emissiveIntensity = 0.18 + u.flash * 1.4
       if (u.body) u.body.scale.setScalar((u.bodyScale ?? 1) * (1 + u.flash * 0.12))
-    } else if (u.mat.emissiveIntensity !== 0.18) {
+    } else if (u.mat && u.mat.emissiveIntensity !== 0.18) {
       u.mat.emissive.copy(u.baseColor)
       u.mat.emissiveIntensity = 0.18
       if (u.body) u.body.scale.setScalar(u.bodyScale ?? 1)
@@ -406,114 +544,68 @@ export class Tower3D {
     return [offX, offZ]
   }
 
-  // Sceau magique : deux anneaux concentriques, des marques radiales et
-  // des glyphes — un cercle d'invocation qui se déploie au sol.
-  makeSeal(radius, color) {
-    const g = new THREE.Group()
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
-    g.userData.materials = [mat]
-
-    const outer = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 3, 40), mat)
-    outer.rotation.x = -Math.PI / 2
-    const inner = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.022, 3, 32), mat)
-    inner.rotation.x = -Math.PI / 2
-    g.add(outer, inner)
-
-    // Marques radiales entre les deux anneaux
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2
-      const tick = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.05), mat)
-      tick.position.set(Math.cos(a) * 0.81, 0, Math.sin(a) * 0.81)
-      tick.rotation.y = -a
-      g.add(tick)
-    }
-    // Glyphes sur l'anneau extérieur
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2 + 0.3
-      const glyph = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.02, 0.09), mat)
-      glyph.position.set(Math.cos(a) * 1.0, 0, Math.sin(a) * 1.0)
-      glyph.rotation.y = a
-      g.add(glyph)
-    }
-    // Triangle central
-    const tri = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.02, 3, 3), mat)
-    tri.rotation.x = -Math.PI / 2
-    g.add(tri)
-
-    g.scale.setScalar(radius)
-    return g
-  }
-
-  spawnVfx(kind, from, to, { radius = 1, color = '#fff4dd' } = {}) {
-    let mesh
-    let life = 0.3
-    const seg = this.quality.id === 'capsules' ? 12 : 20
-    if (kind === 'arrow') {
-      mesh = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.5, 4), new THREE.MeshBasicMaterial({ color: '#e8dcc0' }))
-      life = 0.2
-    } else if (kind === 'cast' || kind === 'drain') {
-      mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.15, 0), new THREE.MeshBasicMaterial({ color }))
-      life = 0.22
-    } else if (kind === 'seal') {
-      mesh = this.makeSeal(radius, color)
-      life = 0.85
-    } else if (kind === 'dashTrail') {
-      mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(0.5, 0.06, 0.5),
-        new THREE.MeshBasicMaterial({ color, transparent: true })
-      )
-      life = 0.35
-    } else if (kind === 'aoe' || kind === 'taunt' || kind === 'slam') {
-      mesh = new THREE.Mesh(
-        new THREE.TorusGeometry(0.4, 0.07, 4, seg),
-        new THREE.MeshBasicMaterial({
-          color: kind === 'taunt' ? '#e8c96a' : kind === 'slam' ? '#d1584a' : color,
-          transparent: true,
-        })
-      )
-      mesh.rotation.x = -Math.PI / 2
-      life = 0.45
-    } else if (kind === 'heal' || kind === 'buff') {
-      mesh = new THREE.Mesh(
-        new THREE.TorusGeometry(0.3, 0.05, 4, 12),
-        new THREE.MeshBasicMaterial({ color: kind === 'heal' ? '#8fe89a' : color, transparent: true })
-      )
-      mesh.rotation.x = -Math.PI / 2
-      life = 0.5
-    } else if (kind === 'die') {
-      mesh = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.4, 0),
-        new THREE.MeshBasicMaterial({ color: '#c9c2b4', transparent: true })
-      )
-      life = 0.4
-    } else {
-      mesh = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.13, 0),
-        new THREE.MeshBasicMaterial({ color: kind === 'bite' ? '#d1584a' : '#fff4dd' })
-      )
-      life = 0.15
-    }
-    const grounded = kind === 'aoe' || kind === 'taunt' || kind === 'slam' || kind === 'seal' || kind === 'dashTrail'
-    mesh.position.set(from[0], grounded ? 0.12 : 0.9, from[1])
-    this.group.add(mesh)
-    this.vfx.push({ mesh, kind, life, maxLife: life, from, to, radius })
-  }
+  // ─── Boucle de rendu ───
 
   update(dt, elapsed, camera) {
     if (!this.run) return
     const q = this.quality
+    const run = this.run
 
-    const tier = tierForFloor(Math.max(this.run.floor, 1))
-    this.floorMat.color.lerp(new THREE.Color(tier.ambiance), 0.03)
+    if (run.terrain && this.builtFloor !== run.terrain.floor) this.buildTerrain(run.terrain)
 
-    // Les monstres d'abord : reactToHits a besoin de leurs meshes.
-    const seen = new Set()
-    for (const m of this.run.monsters) {
-      seen.add(m.id)
+    const tier = tierForFloor(Math.max(run.floor, 1))
+    this.floorMat.color.lerp(new THREE.Color(tier.ambiance), 0.04)
+
+    // Portails : pulsent, s'éteignent quand scellés ou taris
+    for (const pm of this.portalMeshes ?? []) {
+      const p = pm.portal
+      const active = p.sealed <= 0 && p.remaining > 0
+      pm.ring.material.emissiveIntensity = active ? 1.0 + Math.sin(elapsed * 4 + p.id) * 0.4 : 0.12
+      pm.ring.material.color.set(p.sealed > 0 ? '#4a4a55' : '#8a5fd4')
+      pm.ring.rotation.z += dt * (active ? 1.2 : 0.1)
+      pm.core.material.opacity = active ? 0.7 : 0.2
+    }
+    // Pièges armés : ternes tant qu'ils rechargent
+    for (const tm of this.trapMeshes ?? []) {
+      tm.disc.material.opacity = tm.trap.armed > 0 ? 0.15 : 0.45
+    }
+
+    // Murs temporaires du Chevalier
+    if (run.terrain) {
+      for (const [cell, life] of run.terrain.temp) {
+        let mesh = this.tempWallMeshes.get(cell)
+        if (!mesh) {
+          const [x, z] = run.terrain.centerOf(cell)
+          mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 2.2, 1),
+            new THREE.MeshStandardMaterial({
+              color: '#9db0c4', flatShading: true, transparent: true, opacity: 0.7,
+              emissive: '#4a6b8a', emissiveIntensity: 0.5,
+            })
+          )
+          mesh.position.set(x, 1.1, z)
+          this.group.add(mesh)
+          this.tempWallMeshes.set(cell, mesh)
+        }
+        mesh.material.opacity = Math.min(0.7, life / 2)
+      }
+      for (const [cell, mesh] of this.tempWallMeshes) {
+        if (!run.terrain.temp.has(cell)) {
+          this.group.remove(mesh)
+          mesh.geometry.dispose()
+          mesh.material.dispose()
+          this.tempWallMeshes.delete(cell)
+        }
+      }
+    }
+
+    // Monstres
+    const seenM = new Set()
+    for (const m of run.monsters) {
+      seenM.add(m.id)
       let mesh = this.monsterMeshes.get(m.id)
       if (!mesh) {
         mesh = this.makeMonsterMesh(m)
-        mesh.userData.bodyScale = mesh.userData.body.scale.x
         this.monsterMeshes.set(m.id, mesh)
         this.group.add(mesh)
       }
@@ -521,19 +613,98 @@ export class Tower3D {
       mesh.position.set(m.x + ox, Math.abs(Math.sin(elapsed * 7 + m.id)) * 0.07, m.z + oz)
       mesh.userData.hpBar.scale.x = Math.max(m.hp / m.maxHp, 0.001)
       mesh.userData.hpBar.lookAt(camera.position)
-      const target = this.run.heroes.find((h) => h.alive)
-      if (target) mesh.lookAt(target.x, mesh.position.y, target.z)
+      // Teinte selon l'état dominant : gelé, en feu, électrifié
+      const st = m.st
+      const tint = st.freeze > 0 ? '#7fc4ff' : st.burn > 0 ? '#ff8a3c' : st.shock > 0 ? '#ffe66a' : null
+      if (tint && !mesh.userData.flash) mesh.userData.mat.emissive.set(tint)
+      if (tint) mesh.userData.mat.emissiveIntensity = 0.5
+      else if (!mesh.userData.flash) mesh.userData.mat.emissiveIntensity = 0
     }
     for (const [id, mesh] of this.monsterMeshes) {
-      if (!seen.has(id)) {
+      if (!seenM.has(id)) {
         this.group.remove(mesh)
         this.monsterMeshes.delete(id)
       }
     }
 
+    // Invocations
+    const seenS = new Set()
+    for (const s of run.summons) {
+      seenS.add(s.id)
+      let mesh = this.summonMeshes.get(s.id)
+      if (!mesh) {
+        mesh = this.makeSummonMesh(s)
+        this.summonMeshes.set(s.id, mesh)
+        this.group.add(mesh)
+      }
+      mesh.position.set(s.x, Math.abs(Math.sin(elapsed * 6 + s.id)) * 0.1, s.z)
+      mesh.userData.hpBar.scale.x = Math.max(s.hp / s.maxHp, 0.001)
+      mesh.userData.hpBar.lookAt(camera.position)
+      mesh.userData.mat.opacity = Math.min(0.85, s.life / 3)
+    }
+    for (const [id, mesh] of this.summonMeshes) {
+      if (!seenS.has(id)) {
+        this.group.remove(mesh)
+        this.summonMeshes.delete(id)
+      }
+    }
+
+    // Cadavres : ressource du Nécromancien, donc visibles
+    const seenC = new Set()
+    for (const c of run.corpses) {
+      seenC.add(c.id)
+      let mesh = this.corpseMeshes.get(c.id)
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          new THREE.CircleGeometry(0.5, 8),
+          new THREE.MeshBasicMaterial({ color: '#4a3f38', transparent: true, opacity: 0.6, side: THREE.DoubleSide })
+        )
+        mesh.rotation.x = -Math.PI / 2
+        mesh.position.set(c.x, 0.04, c.z)
+        this.corpseMeshes.set(c.id, mesh)
+        this.group.add(mesh)
+      }
+      mesh.material.opacity = Math.min(0.6, c.life / 4)
+    }
+    for (const [id, mesh] of this.corpseMeshes) {
+      if (!seenC.has(id)) {
+        this.group.remove(mesh)
+        mesh.geometry.dispose()
+        mesh.material.dispose()
+        this.corpseMeshes.delete(id)
+      }
+    }
+
+    // Zones persistantes (sanctuaire, nuée, poussière, toile)
+    const seenZ = new Set()
+    for (const z of run.zones) {
+      seenZ.add(z.id)
+      let mesh = this.zoneMeshes.get(z.id)
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          new THREE.CircleGeometry(z.radius, 20),
+          new THREE.MeshBasicMaterial({ color: z.color ?? '#8fe89a', transparent: true, opacity: 0.16, side: THREE.DoubleSide })
+        )
+        mesh.rotation.x = -Math.PI / 2
+        mesh.position.set(z.x, 0.06, z.z)
+        this.zoneMeshes.set(z.id, mesh)
+        this.group.add(mesh)
+      }
+      mesh.material.opacity = 0.1 + 0.08 * Math.sin(elapsed * 3 + z.id)
+    }
+    for (const [id, mesh] of this.zoneMeshes) {
+      if (!seenZ.has(id)) {
+        this.group.remove(mesh)
+        mesh.geometry.dispose()
+        mesh.material.dispose()
+        this.zoneMeshes.delete(id)
+      }
+    }
+
     this.reactToHits()
 
-    this.run.heroes.forEach((hero, i) => {
+    // Agents
+    run.heroes.forEach((hero, i) => {
       const mesh = this.heroMeshes[i]
       const [ox, oz] = this.animateReaction(mesh, dt)
       mesh.position.set(hero.x + ox, 0, hero.z + oz)
@@ -551,19 +722,18 @@ export class Tower3D {
       if (!hero.alive) {
         mesh.rotation.z = Math.min(mesh.rotation.z + dt * 4, Math.PI / 2)
         mat.transparent = true
-        mat.opacity = 0.5
+        mat.opacity = 0.45
       } else {
-        mesh.rotation.z = hero.aff.stun > 0 ? Math.sin(elapsed * 30) * 0.15 : 0
-        mat.opacity = 1
-        // En plein bond, l'agent décolle réellement du sol.
-        mesh.position.y =
-          (hero.jumpHeight ?? 0) + Math.abs(Math.sin(elapsed * 8 + i)) * (q.lathe ? 0.04 : 0.06)
-        // Le pion s'oriente vers le monstre le plus proche
-        if (q.lathe && this.run.monsters.length > 0) {
+        const st = hero.st
+        mesh.rotation.z = st.stun > 0 || st.freeze > 0 ? Math.sin(elapsed * 30) * 0.15 : 0
+        mat.transparent = st.intangible > 0
+        mat.opacity = st.intangible > 0 ? 0.35 : 1
+        mesh.position.y = (hero.jumpHeight ?? 0) + Math.abs(Math.sin(elapsed * 8 + i)) * (q.lathe ? 0.04 : 0.06)
+        if (q.lathe && run.monsters.length > 0) {
           let bx = 0
           let bz = 0
           let bd = Infinity
-          for (const m of this.run.monsters) {
+          for (const m of run.monsters) {
             const d = (m.x - hero.x) ** 2 + (m.z - hero.z) ** 2
             if (d < bd) {
               bd = d
@@ -576,74 +746,115 @@ export class Tower3D {
       }
     })
 
-    for (const ev of this.run.events) {
-      if (ev.t === 'arrow') this.spawnVfx('arrow', ev.from, ev.to)
-      else if (ev.t === 'cast') this.spawnVfx('cast', ev.from, ev.to, { color: ev.color })
-      else if (ev.t === 'drain') this.spawnVfx('drain', ev.from, ev.to, { color: '#7a5f9e' })
-      else if (ev.t === 'aoe') {
-        this.spawnVfx('aoe', ev.at, ev.at, { radius: ev.r, color: ev.color })
-        // Les capacités de zone posent en plus un sceau runique au sol.
-        if (ev.seal && q.seals) this.spawnVfx('seal', ev.at, ev.at, { radius: ev.r, color: ev.color })
-      } else if (ev.t === 'taunt') this.spawnVfx('taunt', ev.at, ev.at, { radius: ev.r })
-      else if (ev.t === 'slam') this.spawnVfx('slam', ev.at, ev.at, { radius: ev.r })
-      else if (ev.t === 'heal') this.spawnVfx('heal', ev.to, ev.to)
-      else if (ev.t === 'buff') {
-        this.spawnVfx('buff', ev.to, ev.to, { color: ev.color })
-        if (q.seals) this.spawnVfx('seal', ev.to, ev.to, { radius: 1.1, color: ev.color })
-      } else if (ev.t === 'upgrade' && q.seals) {
-        const h = this.run.heroes[ev.slot]
-        this.spawnVfx('seal', [h.x, h.z], [h.x, h.z], { radius: 1.3, color: '#e8c96a' })
-      } else if (ev.t === 'dash') {
-        this.spawnVfx('dashTrail', ev.from, ev.to, { color: this.run.heroes[ev.slot]?.cls.color ?? '#fff' })
-      } else if (ev.t === 'jump') {
-        this.spawnVfx('dashTrail', ev.from, ev.from, { color: '#e8dcc0' })
-      } else if (ev.t === 'monsterDie') this.spawnVfx('die', ev.at, ev.at)
-      else if (ev.t === 'slash' || ev.t === 'bite') this.spawnVfx(ev.t, ev.to, ev.to)
+    // Événements → effets
+    for (const ev of run.events) {
+      switch (ev.t) {
+        case 'arrow': this.spawnVfx('arrow', ev.from, ev.to); break
+        case 'bolt': this.spawnVfx('bolt', ev.from, ev.to, { color: ev.color }); break
+        case 'chain': this.spawnVfx('chain', ev.from, ev.to); break
+        case 'pierce': this.spawnVfx('pierce', ev.from, ev.to); break
+        case 'aoe':
+          this.spawnVfx('aoe', ev.at, ev.at, { radius: ev.r, color: ev.color })
+          if (ev.seal && q.seals) this.spawnVfx('seal', ev.at, ev.at, { radius: ev.r, color: ev.color })
+          break
+        case 'zone': this.spawnVfx('zoneRing', ev.at, ev.at, { radius: ev.r, color: ev.color }); break
+        case 'taunt': this.spawnVfx('taunt', ev.at, ev.at, { radius: ev.r }); break
+        case 'heal': this.spawnVfx('heal', ev.to, ev.to); break
+        case 'shield': this.spawnVfx('shield', ev.to, ev.to, { color: ev.color }); break
+        case 'buff':
+          this.spawnVfx('buff', ev.to, ev.to, { color: ev.color })
+          if (q.seals) this.spawnVfx('seal', ev.to, ev.to, { radius: 1.1, color: ev.color })
+          break
+        case 'draft':
+          if (q.seals) {
+            const h = run.heroes[ev.slot]
+            this.spawnVfx('seal', [h.x, h.z], [h.x, h.z], { radius: 1.3, color: '#3fb8a8' })
+          }
+          break
+        case 'dash':
+        case 'charge':
+        case 'blink':
+        case 'swap':
+          this.spawnVfx('trail', ev.from, ev.to, { color: ev.color ?? '#e8dcc0' })
+          break
+        case 'jump': this.spawnVfx('trail', ev.from, ev.from, { color: '#e8dcc0' }); break
+        case 'seal': this.spawnVfx('seal', ev.at, ev.at, { radius: 1.4, color: '#7a5f9e' }); break
+        case 'summon':
+        case 'raise': this.spawnVfx('seal', ev.at, ev.at, { radius: 1.2, color: ev.color ?? '#6b7f5e' }); break
+        case 'shatter': this.spawnVfx('shatter', ev.at, ev.at); break
+        case 'monsterDie':
+        case 'summonDie': this.spawnVfx('die', ev.at, ev.at); break
+        case 'trap': this.spawnVfx('aoe', ev.at, ev.at, { radius: 1.2, color: '#d1584a' }); break
+        case 'slash':
+        case 'bite': this.spawnVfx(ev.t, ev.to, ev.to); break
+      }
     }
 
+    // Animation des effets
     for (let i = this.vfx.length - 1; i >= 0; i--) {
       const v = this.vfx[i]
       v.life -= dt
       const p = 1 - v.life / v.maxLife
-      if (v.kind === 'arrow' || v.kind === 'cast' || v.kind === 'drain') {
-        v.mesh.position.set(
-          v.from[0] + (v.to[0] - v.from[0]) * p,
-          0.9 + Math.sin(p * Math.PI) * 0.4,
-          v.from[1] + (v.to[1] - v.from[1]) * p
-        )
-        if (v.kind === 'arrow') {
+      switch (v.kind) {
+        case 'arrow':
+        case 'bolt':
+        case 'chain':
+          v.mesh.position.set(
+            v.from[0] + (v.to[0] - v.from[0]) * p,
+            0.9 + Math.sin(p * Math.PI) * 0.4,
+            v.from[1] + (v.to[1] - v.from[1]) * p
+          )
+          if (v.kind === 'arrow') {
+            v.mesh.lookAt(v.to[0], 0.9, v.to[1])
+            v.mesh.rotateX(Math.PI / 2)
+          }
+          break
+        case 'pierce': {
+          const dx = v.to[0] - v.from[0]
+          const dz = v.to[1] - v.from[1]
+          const len = Math.hypot(dx, dz) || 1
+          v.mesh.position.set(v.from[0] + dx / 2, 0.9, v.from[1] + dz / 2)
+          v.mesh.scale.z = len
           v.mesh.lookAt(v.to[0], 0.9, v.to[1])
-          v.mesh.rotateX(Math.PI / 2)
+          v.mesh.material.opacity = 1 - p
+          break
         }
-      } else if (v.kind === 'seal') {
-        // Le sceau se déploie puis tourne en s'effaçant
-        const grow = Math.min(1, p * 4)
-        v.mesh.scale.setScalar(v.radius * (0.2 + grow * 0.8))
-        v.mesh.rotation.y = p * 1.2
-        for (const mat of v.mesh.userData.materials) mat.opacity = 0.85 * (1 - p * p)
-      } else if (v.kind === 'dashTrail') {
-        v.mesh.position.set(
-          v.from[0] + (v.to[0] - v.from[0]) * p,
-          0.12,
-          v.from[1] + (v.to[1] - v.from[1]) * p
-        )
-        v.mesh.material.opacity = 0.55 * (1 - p)
-      } else if (v.kind === 'aoe' || v.kind === 'taunt' || v.kind === 'slam') {
-        const s = 0.4 + p * v.radius * 2.2
-        v.mesh.scale.set(s, s, 1)
-        v.mesh.material.opacity = 0.9 * (1 - p)
-      } else if (v.kind === 'heal' || v.kind === 'buff') {
-        v.mesh.position.y = 0.2 + p * 1.4
-        v.mesh.material.opacity = 1 - p
-      } else if (v.kind === 'die') {
-        v.mesh.scale.setScalar(1 + p * 1.6)
-        v.mesh.material.opacity = 0.7 * (1 - p)
-      } else {
-        v.mesh.scale.setScalar(1 + p * 0.8)
+        case 'seal':
+          v.mesh.scale.setScalar(v.radius * (0.2 + Math.min(1, p * 4) * 0.8))
+          v.mesh.rotation.y = p * 1.2
+          for (const mat of v.mesh.userData.materials) mat.opacity = 0.85 * (1 - p * p)
+          break
+        case 'trail':
+          v.mesh.position.set(
+            v.from[0] + (v.to[0] - v.from[0]) * p, 0.12,
+            v.from[1] + (v.to[1] - v.from[1]) * p
+          )
+          v.mesh.material.opacity = 0.55 * (1 - p)
+          break
+        case 'aoe':
+        case 'taunt':
+        case 'zoneRing': {
+          const s = 0.4 + p * v.radius * 2.2
+          v.mesh.scale.set(s, s, 1)
+          v.mesh.material.opacity = 0.9 * (1 - p)
+          break
+        }
+        case 'heal':
+        case 'buff':
+        case 'shield':
+          v.mesh.position.y = 0.2 + p * 1.4
+          v.mesh.material.opacity = 1 - p
+          break
+        case 'die':
+        case 'shatter':
+          v.mesh.scale.setScalar(1 + p * 1.6)
+          v.mesh.material.opacity = 0.7 * (1 - p)
+          break
+        default:
+          v.mesh.scale.setScalar(1 + p * 0.8)
       }
       if (v.life <= 0) {
         this.group.remove(v.mesh)
-        // Un sceau est un groupe de plusieurs meshes, pas un mesh unique.
         v.mesh.traverse((o) => {
           if (o.geometry) o.geometry.dispose()
           if (o.material?.dispose) o.material.dispose()

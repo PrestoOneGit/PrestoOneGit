@@ -1,7 +1,8 @@
 # Conception — refonte du plateau, des classes et des états
 
-> Document de travail, **pas encore implémenté**. À valider et annoter avant
-> que le code soit écrit.
+> **Implémenté.** Ce document décrit le jeu tel qu'il tourne aujourd'hui.
+> Les quatre questions ouvertes de la fin ont été tranchées, leurs réponses
+> sont reportées en bas de page.
 
 ---
 
@@ -257,11 +258,19 @@ Le chantier est gros. Découpé pour que tu voies quelque chose tourner vite :
 
 ---
 
-## Questions ouvertes
+## Questions tranchées
 
-- « Berserk » **remplace**-t-il l'ancien Berserker, ou veux-tu les deux ?
-- Les invocations comptent-elles comme alliés pour les soins du Clerc ?
-- Un agent tombé peut-il être relevé (Clerc) ou la mort est-elle définitive
-  pour tout le run ?
-- Les pièges sont-ils visibles des agents avant déclenchement, ou faut-il
-  qu'ils apprennent à les repérer en les subissant ?
+- **Berserk remplace** l'ancien Berserker. Le catalogue compte neuf classes,
+  pas dix.
+- **Les invocations ne comptent pas comme alliés** pour les soins du Clerc :
+  l'Invocateur ne peut pas transformer le Clerc en pompe à soins gratuite.
+- **Un agent tombé peut être relevé une fois** par run (`REVIVES_PER_AGENT = 1`).
+  La seconde mort est définitive.
+- **Les pièges ne sont pas tous visibles.** Fosse à pointes et goudron le sont ;
+  rune arcanique et braséro brisé ne le sont pas — ni dans les observations des
+  réseaux, ni à l'écran. Sur 25 étages mesurés : 65 visibles, 52 cachés. Les
+  agents doivent donc apprendre à les subir puis à les éviter par mémoire de
+  position, pas par perception directe.
+
+L'ancienne session à 300 générations n'a pas été conservée : le format de
+sauvegarde passe de 3 à 4 et l'entraînement repart de zéro.

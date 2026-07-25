@@ -3,7 +3,6 @@
 // un tableur — plus un résumé markdown compact quand le JSON est trop long.
 
 import { TICK, TowerRun } from './engine.js'
-import { UPGRADES } from './data.js'
 import { compositionList, describeComposition } from './brain.js'
 
 // Rejoue un run complet en mode journalisé et renvoie le rapport.
@@ -25,13 +24,21 @@ export function buildReport(run, { generation = null, fitness = null } = {}) {
     degatsInfliges: Math.round(h.damage),
     soins: Math.round(h.healing),
     degatsSubis: Math.round(h.damageTaken),
-    ameliorations: UPGRADES.map((u, i) => ({ id: u.id, rangs: h.upgrades[i] })).filter((u) => u.rangs > 0),
+    // La « build » draftée : capacités acquises et passifs pris.
+    capacites: h.abilities.map((a) => a.label),
+    passifs: h.passives.map((p) => p.label),
+    cartesPrises: h.stats.cards,
     utilisation: {
       attaqueDeBase: h.stats.basic,
-      capacites: h.cls.abilities.map((ab, i) => ({ id: ab.id, label: ab.label, fois: h.stats.abilities[i] })),
+      capacites: Object.entries(h.stats.abilities).map(([id, fois]) => ({
+        id,
+        label: h.abilities.find((a) => a.id === id)?.label ?? id,
+        fois,
+      })),
       dash: h.stats.dash,
       course: h.stats.sprint,
       bond: h.stats.jump,
+      invocations: h.stats.summoned,
     },
   }))
 
@@ -51,6 +58,7 @@ export function buildReport(run, { generation = null, fitness = null } = {}) {
       dureeSecondes: Number(run.time.toFixed(1)),
       reposUtilises: 3 - run.restsLeft,
       survivants: run.heroes.filter((h) => h.alive).length,
+      monstresTues: run.monstersKilled,
     },
     totaux: {
       degats: totalDamage,
@@ -62,13 +70,16 @@ export function buildReport(run, { generation = null, fitness = null } = {}) {
     etages: run.floorLog.map((f) => ({
       etage: f.floor,
       boss: f.boss,
+      terrain: f.archetype,
+      portails: f.portals,
+      pieges: f.traps,
       duree: f.duration,
       monstres: f.monsters,
       degatsInfliges: Math.round(f.damageDealt),
       degatsSubis: Math.round(f.damageTaken),
       morts: f.deaths,
       reposApres: f.restTaken,
-      ameliorationsChoisies: f.upgrades,
+      cartesChoisies: f.cards,
       survivants: f.survivors,
       echec: f.failed ?? false,
     })),
@@ -82,19 +93,18 @@ export function reportToMarkdown(report) {
   const lines = []
   lines.push(`# Run tour — génération ${m.generation ?? '?'} (graine ${m.graine})`)
   lines.push('')
-  lines.push(`**Résultat** : étage ${m.etageAtteint} atteint, ${m.etagesFranchis} franchis, issue « ${m.issue} », ${m.dureeSecondes}s, ${m.survivants}/5 survivants, ${m.reposUtilises} repos utilisés.`)
+  lines.push(`**Résultat** : étage ${m.etageAtteint} atteint, ${m.etagesFranchis} franchis, issue « ${m.issue} », ${m.dureeSecondes}s, ${m.survivants}/5 survivants, ${m.monstresTues} monstres tués, ${m.reposUtilises} repos.`)
   lines.push(`**Composition** : ${m.compositionLisible}.`)
   lines.push(`**Totaux** : ${report.totaux.degats} dégâts (${report.totaux.degatsParSeconde}/s), ${report.totaux.soins} soins, ${report.totaux.degatsSubis} subis.`)
   lines.push('')
-  lines.push('## Agents')
+  lines.push('## Agents et builds draftées')
   lines.push('')
-  lines.push('| Slot | Classe | Niv | Dégâts | Soins | Subis | Mort | Améliorations | Dash/Course/Bond |')
-  lines.push('|---|---|---|---|---|---|---|---|---|')
+  lines.push('| Classe | Niv | Dégâts | Soins | Subis | Fin | Capacités | Passifs |')
+  lines.push('|---|---|---|---|---|---|---|---|')
   for (const a of report.agents) {
-    const up = a.ameliorations.map((u) => `${u.id}×${u.rangs}`).join(', ') || '—'
-    const mob = `${a.utilisation.dash}/${a.utilisation.course}/${a.utilisation.bond}`
     lines.push(
-      `| ${a.slot} | ${a.label} | ${a.niveau} | ${a.degatsInfliges} | ${a.soins} | ${a.degatsSubis} | ${a.etageDeMort ? `étage ${a.etageDeMort}` : 'survit'} | ${up} | ${mob} |`
+      `| ${a.label} | ${a.niveau} | ${a.degatsInfliges} | ${a.soins} | ${a.degatsSubis} | ` +
+        `${a.etageDeMort ? `étage ${a.etageDeMort}` : 'survit'} | ${a.capacites.join(', ')} | ${a.passifs.join(', ') || '—'} |`
     )
   }
   lines.push('')
@@ -107,24 +117,25 @@ export function reportToMarkdown(report) {
     }
   }
   uses.sort((x, y) => y.fois - x.fois)
-  for (const u of uses.slice(0, 8)) lines.push(`- ${u.label} (${u.agent}) : ${u.fois}×`)
+  for (const u of uses.slice(0, 10)) lines.push(`- ${u.label} (${u.agent}) : ${u.fois}×`)
   lines.push('')
   lines.push('## Étages')
   lines.push('')
-  lines.push('| Étage | Boss | Durée | Monstres | Dégâts | Subis | Morts | Repos |')
+  lines.push('| Étage | Terrain | Portails | Durée | Monstres | Dégâts | Subis | Pertes |')
   lines.push('|---|---|---|---|---|---|---|---|')
   for (const f of report.etages) {
     const monstres = Object.entries(f.monstres).map(([k, v]) => `${v}× ${k}`).join(', ')
     const morts = f.morts.map((d) => d.agent).join(', ') || '—'
     lines.push(
-      `| ${f.etage}${f.echec ? ' (échec)' : ''} | ${f.boss ? 'oui' : ''} | ${f.duree}s | ${monstres} | ${f.degatsInfliges} | ${f.degatsSubis} | ${morts} | ${f.reposApres ? 'oui' : ''} |`
+      `| ${f.etage}${f.echec ? ' (échec)' : ''}${f.boss ? ' BOSS' : ''} | ${f.terrain} | ${f.portails} | ` +
+        `${f.duree}s | ${monstres} | ${f.degatsInfliges} | ${f.degatsSubis} | ${morts} |`
     )
   }
   return lines.join('\n')
 }
 
 // Compare plusieurs rapports : utile pour demander à un LLM « qu'est-ce
-// qui a changé entre la génération 20 et la 130 ? »
+// qui a changé entre la génération 20 et la 300 ? »
 export function compareReports(reports) {
   return {
     runs: reports.map((r) => ({
@@ -135,12 +146,16 @@ export function compareReports(reports) {
       degats: r.totaux.degats,
       degatsParSeconde: r.totaux.degatsParSeconde,
       survivants: r.meta.survivants,
-      reposUtilises: r.meta.reposUtilises,
+      monstresTues: r.meta.monstresTues,
+      builds: r.agents.map((a) => ({
+        classe: a.label,
+        capacites: a.capacites,
+        passifs: a.passifs,
+      })),
       mobiliteTotale: r.agents.reduce(
         (s, a) => s + a.utilisation.dash + a.utilisation.course + a.utilisation.bond,
         0
       ),
-      ameliorations: r.agents.flatMap((a) => a.ameliorations.map((u) => u.id)),
     })),
   }
 }

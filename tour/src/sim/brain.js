@@ -1,35 +1,46 @@
-// Cerveau d’un agent : MLP 66 → 28 → 18. Aucun comportement écrit à la
-// main — le réseau décide du déplacement, de la mobilité (dash, course,
-// bond), de l'action (attaque de base ou l'une des 3 capacités), du
-// ciblage, de l'envie de repos et du CHOIX d'amélioration au niveau.
+// Cerveau d'un agent : MLP à une couche cachée. Aucun comportement écrit
+// à la main — le réseau décide du déplacement, de la mobilité, de l'action,
+// du ciblage, du repos, et de la carte qu'il prend au draft.
 //
 // Le génome d'une équipe = 5 slots, chacun portant SA CLASSE (entier,
-// mutable) et SON cerveau. La composition d'équipe est donc elle-même
-// un objet d'évolution : rien n'empêche 5 fois la même classe.
+// mutable) et SON cerveau. La composition d'équipe est donc elle-même un
+// objet d'évolution : rien n'empêche 5 fois la même classe.
 
-import { CLASSES, UPGRADES } from './data.js'
+import { CARDS_PER_LEVEL, CLASSES } from './data.js'
 
-// 22 sur soi (état, mobilité, améliorations) + 20 monstres + 20 alliés + 4 contexte
-export const INPUT_SIZE = 66
-export const HIDDEN = 28
+export const WALL_RAYS = 6
+export const ABILITY_SLOTS = 4 // un agent ne porte jamais plus de 4 capacités
 
-// Disposition des sorties :
-//  0-1  déplacement (x, z) — lus directement, sans constante
-//  2    porte d'action (agir ou non)
-//  3    attaque de base
-//  4-6  capacités 1..3
-//  7    préférence de cible (0 = plus proche, 1 = plus faible)
-//  8    envie de repos
-//  9-11 mobilité : dash, course, bond
-//  12-17 préférence pour chacune des 6 améliorations
+// Découpage des entrées :
+//   16  soi  (PV, mana, états, position)
+//    8  capacités possédées et prêtes (4 + 4)
+//    5  mobilité (3 recharges + en l'air + course active)
+//   24  4 monstres proches × 6
+//   20  4 alliés × 5
+//    6  capteurs de murs
+//   10  portail / piège / cadavre proches + invocations
+//    4  contexte (étage, densité, repos, boss)
+//   15  cartes du draft (3 × 5)
+export const INPUT_SIZE = 108
+export const HIDDEN = 24
+
+// Découpage des sorties :
+//   0-1  déplacement (x, z)
+//   2    porte d'action
+//   3    attaque de base
+//   4-7  les 4 emplacements de capacité
+//   8    préférence de cible (0 = plus proche, 1 = plus faible)
+//   9    envie de repos
+//   10-12 mobilité : dash, course, bond
+//   13-15 choix de carte au draft
 export const OUT_GATE = 2
 export const OUT_BASIC = 3
 export const OUT_ABILITY = 4
-export const OUT_TARGET_PREF = 7
-export const OUT_REST = 8
-export const OUT_MOBILITY = 9
-export const OUT_UPGRADE = 12
-export const OUTPUT_SIZE = OUT_UPGRADE + UPGRADES.length
+export const OUT_TARGET_PREF = OUT_ABILITY + ABILITY_SLOTS
+export const OUT_REST = OUT_TARGET_PREF + 1
+export const OUT_MOBILITY = OUT_REST + 1
+export const OUT_CARD = OUT_MOBILITY + 3
+export const OUTPUT_SIZE = OUT_CARD + CARDS_PER_LEVEL
 
 export const BRAIN_SIZE = INPUT_SIZE * HIDDEN + HIDDEN + HIDDEN * OUTPUT_SIZE + OUTPUT_SIZE
 export const SLOTS = 5

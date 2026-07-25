@@ -1,12 +1,14 @@
 # La Tour — des aventuriers IA apprennent à grimper
 
 Une équipe de 5 aventuriers affronte une tour de 100 étages (1000 à terme) :
-paliers de nouveaux monstres, boss tous les 10 étages, élites, afflictions,
-sorts, ressources persistantes et repos limités — façon donjon D&D. **Aucun
-comportement n'est écrit à la main** : chaque aventurier est piloté par son
-réseau de neurones, et même la **composition de l'équipe** (les 5 classes)
-fait partie du génome. Si la méta converge vers 3 mages, c'est que
-l'évolution l'a découvert.
+plateau carré avec murs, portails et pièges, paliers de nouveaux monstres,
+boss tous les 10 étages, élites, états et interactions élémentaires, draft
+roguelike à chaque niveau, ressources persistantes et repos limités — façon
+donjon D&D. **Aucun comportement n'est écrit à la main** : chaque aventurier
+est piloté par son réseau de neurones, et même la **composition de l'équipe**
+(les 5 classes parmi 9) et **les cartes qu'il drafte** font partie de ce que
+l'évolution découvre. Si la méta converge vers 3 mages, c'est qu'elle l'a
+trouvé toute seule.
 
 ## Lancer
 
@@ -28,46 +30,89 @@ des réseaux** (mesuré par `audit/` — voir la note de profilage plus bas).
 La logique de jeu ne pèse que 5 % : micro-optimiser le moteur ne mènerait
 nulle part, et c'est précisément pourquoi le portage GPU est le bon levier.
 
+## Le plateau (`src/sim/terrain.js`)
+
+**Carré de 32×32**, redessiné à chaque étage selon quatre archétypes tirés à
+la graine : salle ouverte, colonnade, couloirs, chambres. Les murs bloquent
+**le déplacement et la ligne de vue** — sans cette seconde règle un couloir
+ne vaudrait rien et Shadow Step non plus.
+
+- **Portails** : 2 à 4 par étage, sur les bords. Les monstres en sortent par
+  vagues, avec une cadence propre à chaque portail. On peut tenir le goulot
+  devant, ou le sceller (Occultiste).
+- **Pièges** : déclenchés **par les deux camps**, donc on peut y attirer les
+  monstres. Fosse à pointes et goudron sont visibles ; rune arcanique et
+  braséro brisé ne le sont pas — ni à l'écran, ni dans les observations des
+  réseaux. Sur 25 étages mesurés : 65 visibles, 52 cachés.
+
 ## Le jeu (data-driven : `src/sim/data.js`)
 
-- **6 classes** × 3 capacités : Chevalier (coup de bouclier étourdissant,
-  provocation, posture), Berserker (frappe lourde, tourbillon, cri de guerre,
-  passif rage), Archère (tir précis, tir handicapant, pluie de flèches),
-  Mage (boule de feu, éclair de givre, nova), Clerc (soin, cercle de soin,
-  bénédiction), Occultiste (malédiction, nuée toxique, drain).
-- **Afflictions** : brûlure, poison (cumulable), ralentissement, étourdissement,
-  vulnérabilité. **Buffs** : bénédiction (+dégâts), posture (-dégâts subis).
-- **La tour** : budget de monstres croissant par étage, paliers (rats/gobelins →
-  orcs/chamans → araignées/golems → spectres/pyromants → trolls/liches),
-  boss tous les 10 étages, élites à partir du 15. Monstres soigneurs,
-  blindés, perce-armure, à zone… Les monstres grimpent en puissance un peu
-  plus vite que les héros : le mur arrive toujours, le repousser demande de
-  mieux jouer.
+- **9 classes** × 4 capacités : Chevalier (frappe de bouclier, provocation,
+  mur de garde, charge), Berserk (coup de taille brise-gel, fauchage, rage
+  noire, charge brutale), Archère (tir précis, flèche perforante, piège à
+  mâchoires, roulade), Mage (light arrow, freeze, explosion, shadow step),
+  Clerc (châtiment, soin, sanctuaire, intervention), Occultiste (éclat
+  d'ombre, nuée toxique, malédiction, sceau de scellement), Invocateur
+  (éclat, slime, golem, permutation), Nécromancien (éclat d'os, lever les
+  morts, explosion de cadavre, linceul d'os), Lutin (dard, poussière
+  d'entrain, chant de bravoure, bond farceur).
+- **15 états unifiés** portés par toutes les entités. Négatifs : en feu,
+  empoisonné (cumulable ×5), électrifié (se propage), gelé, ralenti,
+  étourdi, vulnérable, saignement, terreur. Positifs : béni, hâte, bouclier,
+  régénération, posture, intangible.
+- **Quatre interactions élémentaires**, peu nombreuses mais lisibles :
+  gelé + coup lourd brise le gel et double les dégâts ; feu et gel
+  s'annulent ; l'électricité se propage à deux cibles au lieu d'une sur un
+  gelé ; poison + feu double les dégâts du poison.
+- **14 monstres** à comportement propre : gobelin (fuit quand les siens
+  tombent), slime (se scinde), squelette (se relève une fois), loup (meute,
+  cible les blessés), serpent (frappe et recule, empoisonne), orc,
+  hobgobelin (bénit les gobelins), chauve-souris (vole, ignore les pièges au
+  sol), araignée (pose des toiles), goule (ressuscite), golem (brise les
+  murs temporaires), spectre (traverse les murs), troll (régénère sauf sous
+  le feu), liche (invoque, gèle, électrifie). Boss tous les 10 étages,
+  élites à partir du 4ᵉ.
 - **Ressources persistantes** : PV/mana conservés entre étages, régén
   partielle, 3 repos complets par run — le moment de se reposer est VOTÉ
-  par les réseaux (une sortie dédiée), pas décidé par une règle.
+  par les réseaux (une sortie dédiée), pas décidé par une règle. Un agent
+  tombé est relevé **une fois** par run ; la seconde mort est définitive.
 
-## Mobilité et progression
+## Mobilité et draft roguelike
 
 - **Trois déplacements à cooldown**, communs à toutes les classes :
-  **dash** (repositionnement instantané, 5 s), **course** (+70 % de vitesse
-  pendant 3 s, 12 s), **bond** (saut de 7 unités qui **esquive la mêlée**
+  **dash** (repositionnement instantané, 5 s), **course** (+60 % de vitesse
+  pendant 3 s, 12 s), **bond** (saut de 6,5 unités qui **esquive la mêlée**
   pendant le vol, 10 s). Le réseau décide quand les déclencher.
-- **Un niveau par étage franchi**, et tous les 5 étages **un choix
-  d'amélioration** parmi 6 (Vigueur, Puissance, Célérité, Arcanes,
-  Amplification, Résilience) — le réseau désigne laquelle. Les rangs se
-  cumulent : c'est la « build » de l'agent, et elle est apprise.
+- **Plus de croissance de stats.** Un agent démarre avec son attaque de base
+  et **une seule** capacité de classe. À chaque niveau, **3 cartes tirées au
+  sort** et le réseau en choisit une : une des 3 capacités de classe qui lui
+  manquent, un des 10 passifs communs (Célérité, Vivacité, Endurance,
+  Concentration, Vampirisme, Esquive, Allonge, Résilience, Curée, Pas
+  assuré), ou un des 5 renforts d'une capacité déjà possédée. C'est la
+  « build » de l'agent, et elle est apprise — les cartes proposées font
+  partie des observations du réseau.
+- Effet de bord heureux : comme un agent ne porte jamais plus de 4
+  capacités, l'espace d'action reste borné malgré 36 capacités au catalogue.
+  Le draft résout le problème qu'il crée.
 
 ## L'apprentissage (zéro heuristique)
 
-- MLP 66 → 28 → 18 par agent : observations brutes (soi, cooldowns de
-  mobilité, améliorations possédées, 4 monstres proches, 4 alliés, étage,
-  repos restants) → déplacement, mobilité, choix d'action parmi les 4
-  disponibles, ciblage, envie de repos, préférence d'amélioration.
-- Neuro-évolution : 32 équipes/génération dans des Web Workers, croisement
-  par agents entiers (classe + cerveau), mutation auto-adaptative,
-  mutation de classe rare (3 %) qui explore la méta.
-- Fitness = étages franchis (x1000) + progression de l'étage courant.
+- MLP **108 → 24 → 16** par agent (3 016 poids ; 15 085 pour l'équipe des 5,
+  classes comprises). Observations brutes : soi et ses états, cooldowns de
+  mobilité, capacités et passifs possédés, **6 capteurs de distance aux murs**,
+  4 monstres proches, 4 alliés, ses invocations, les cadavres proches, les
+  portails, les pièges **visibles**, l'étage, les repos restants, et **les 3
+  cartes proposées** quand un draft est en cours.
+- Sorties : déplacement, mobilité (dash/course/bond), choix d'action parmi
+  les 4 capacités portées, ciblage, envie de repos, **et le choix de carte**.
+- Neuro-évolution : 32 équipes/génération dans des Web Workers, **4 graines
+  par évaluation** (mesuré : à 2 graines le biais de sélection atteint 20 %,
+  à 4 il tombe à 3-4 %), croisement par agents entiers (classe + cerveau),
+  mutation auto-adaptative, mutation de classe rare (3 %) qui explore la méta.
+- Fitness = étages franchis (×1000) **plus des termes continus** (monstres
+  tués, dégâts, PV restants, temps) : sans eux le paysage est un escalier où
+  99,4 % de la variance vient d'un entier, et où 0 enfant sur 280 dépasse son
+  parent.
 
 ## Persistance
 
@@ -106,19 +151,38 @@ tour.playGeneration(130)          // rejouer ce champion dans la vue 3D
 
 ## Ce qu'on observe (mesuré)
 
-- Les équipes aléatoires meurent aux étages 6-8 ; en 60 générations
-  (~70 s de calcul mono-thread), record à l'étage 11-12 et **la compo
-  évolue seule** : le Clerc initial a été remplacé par un 2ᵉ Mage, puis la
-  méta a oscillé entre « 4× Mage / Archère » et « 3× Mage / Archère /
-  Berserker ». Le journal d'ascension raconte ces bascules en direct.
+Mesures sur le plateau carré, population 32, 4 graines par évaluation :
+
+- **Base de comparaison** : des équipes tirées au hasard atteignent en
+  moyenne l'**étage 4,7**.
+- **Évolution** : record à l'étage **17** en génération 0, **20** en
+  génération 9, **23** en génération 18 ; la fitness moyenne de la
+  population monte de **+61 %** sur ces 18 générations.
+- **Les réseaux apprennent à naviguer.** Les runs qui se terminent par
+  *enlisement* (l'équipe n'arrive plus à atteindre les monstres à travers
+  les murs) passent de **24 sur 128 à 11 sur 128**. Personne n'a écrit de
+  code de pathfinding : le moteur ne fournit qu'un contournement mécanique
+  du dernier mètre, la décision d'itinéraire est apprise.
+- **La compo évolue seule** : Chevalier / 3× Berserk / Lutin en génération 0,
+  Mage / 3× Berserk / Invocateur en 9, Clerc / 3× Berserk / Archère en 18.
+  Le journal d'ascension raconte ces bascules en direct.
 - Boss des étages 10/20/… : murs visibles dans la courbe.
 
 ## Visionneuse
 
-Rejeu 3D du meilleur run (barres PV/mana, anneaux d'AoE, provocation, frappes
-de boss), ambiance du plateau qui change avec les paliers, mur des ascensions
-parallèles (une par worker), courbe de l'étage record, rejeux cliquables des
-40 derniers records, contrôles pause/x1/x2/x4.
+Rejeu 3D du meilleur run sur le plateau carré : murs instanciés (bordure
+haute et sombre, obstacles intérieurs plus bas pour qu'on voie par-dessus),
+**portails** en anneaux pulsants qui s'éteignent quand ils sont scellés ou
+épuisés, **pièges visibles seulement** — les cachés ne sont pas dessinés,
+exactement comme les agents les perçoivent —, invocations, cadavres, zones
+persistantes, murs temporaires du Chevalier, et teinte d'état sur les
+monstres (bleu gelé, orange en feu, jaune électrifié). Plus : barres
+PV/mana, anneaux d'AoE, mur des ascensions parallèles (une par worker),
+courbe de l'étage record, rejeux cliquables des 40 derniers records,
+contrôles pause/x1/x2/x4.
+
+La caméra recadre le plateau sur la zone d'écran laissée libre par les
+panneaux : replier le panneau latéral recentre la vue au lieu de la décaler.
 
 **Rejouer n'importe quelle génération** : le champion de *chaque* génération
 est archivé (400 dernières, plus tous les records, jamais évincés). Le champ
@@ -133,7 +197,7 @@ du rejeu, sans toucher au reste.
 | Niveau | Modèles | Ombres | Effets |
 |---|---|---|---|
 | **Capsules** | capsules colorées | non | projectiles et zones |
-| **Pions** (défaut) | pièces tournées façon jeu d'échecs, emblème par classe (couronne, cornes, arc, chapeau, auréole, orbe) | oui | + **sceaux magiques** (cercles runiques au sol pour les zones, buffs et montées en niveau), traînées de dash, arcs de bond |
+| **Pions** (défaut) | pièces tournées façon jeu d'échecs, emblème par classe (une forme par kit sur les neuf) | oui | + **sceaux magiques** (cercles runiques au sol pour les zones, buffs et montées en niveau), traînées de dash, arcs de bond |
 | **Deluxe** | pions + matériaux plus riches | oui | + fentes à l'attaque, flashs d'impact, pop des cibles touchées |
 
 **Vrais modèles 3D** : le rendu est le seul endroit qui touche à la
@@ -172,34 +236,32 @@ aléatoire à budget égal, contrôle négatif sans sélection, et reproduction
 exacte dans un processus Node indépendant des fitness annoncées par
 l'interface.
 
-## Le plafond actuel, et pourquoi
+## Le plafond, et ce qui l'a levé
 
-`node audit/diagnose-plateau.mjs` mesure les trois causes possibles d'un
-plafonnement. Verdict au moment où ces lignes sont écrites :
+`node audit/diagnose-plateau.mjs` mesure les causes possibles d'un
+plafonnement. Sur la version précédente du jeu, le verdict était sans appel :
 
-**Le plafond est arithmétique, pas cognitif.** Les monstres gagnent 5,5 %
-de puissance par étage contre 3,5 % pour les agents, et leur nombre croît
-en plus linéairement. Le total de PV d'un étage passe de 0,2× celui de
-l'équipe au 1ᵉʳ étage à 1,3× au 15ᵉ et 3,6× au 30ᵉ. Aucune stratégie, même
-parfaite, ne franchit ce mur : sur 12 graines inédites, un champion meurt
-aux étages 8 à 10, toujours par **mort** et jamais par enlisement.
+> **Le plafond était arithmétique, pas cognitif.** Les monstres gagnaient
+> 5,5 % de puissance par étage contre 3,5 % pour les agents, et leur nombre
+> croissait en plus linéairement. Le total de PV d'un étage passait de 0,2×
+> celui de l'équipe au 1ᵉʳ étage à 1,3× au 15ᵉ et 3,6× au 30ᵉ. Aucune
+> stratégie, même parfaite, ne franchissait ce mur : sur 12 graines
+> inédites, un champion mourait aux étages 8 à 10, toujours par **mort** et
+> jamais par enlisement. Les leviers tactiques étaient déjà saturés (49 %
+> des actions étaient des capacités, aucune laissée de côté).
 
-Deux constats qui écartent les autres explications :
+C'est exactement ce que la refonte supprime : **le draft ne donne plus de
+stats**, ni aux agents ni aux monstres. La difficulté vient désormais du
+nombre, de la variété et de la cadence des portails, et de la géométrie du
+plateau. Le plafond observé passe de l'étage 8-10 à l'étage 23 en 18
+générations, et il n'est plus atteint par écrasement arithmétique.
 
-- **Les leviers tactiques sont déjà saturés.** Les capacités représentent
-  49 % des actions, aucune n'est laissée de côté, et la mobilité est
-  massivement utilisée (10 à 20 dashes, 9 à 14 bonds par agent et par run).
-  Les agents jouent déjà tout ce que les règles offrent.
-- **Le génome est surdimensionné pour la population** : 11 995 paramètres
-  pour 32 individus, soit 375 paramètres par individu évalué. Un
-  algorithme génétique explore correctement quelques centaines de
-  paramètres à cette taille de population — c'est un frein secondaire,
-  réel mais moins décisif que le mur.
-
-La suite logique est donc d'**élargir le jeu** (courbes de progression
-rééquilibrées, plus de terrain, plus de choix tactiques) plutôt que de
-pousser l'algorithme. Deux améliorations sur six ne sont d'ailleurs jamais
-choisies (Vigueur et Célérité) : signe qu'elles sont mal calibrées.
+Un frein secondaire subsiste et s'est même accentué : **le génome est
+surdimensionné pour la population** — 15 085 paramètres pour 32 individus.
+Un algorithme génétique explore correctement quelques centaines de
+paramètres à cette taille de population. C'est l'argument principal pour la
+phase GPU : ce n'est pas la vitesse par run qui manque, c'est la taille de
+population.
 
 ## Prochaine étape : la phase GPU
 
