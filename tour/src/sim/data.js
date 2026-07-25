@@ -190,9 +190,9 @@ export const CLASSES = [
     dmg: 10, range: 7, cooldown: 0.8, speed: 5.4,
     starter: 'dard',
     abilities: [
-      { id: 'dard', label: 'Dard', kind: 'bolt', cost: 6, cd: 1.9, range: 7.5, power: 19 },
-      { id: 'poussiere_entrain', label: 'Poussière d’entrain', kind: 'zone', cost: 20, cd: 14, range: 5, radius: 3.6, duration: 7, applies: { haste: 1 }, allies: true },
-      { id: 'chant_bravoure', label: 'Chant de bravoure', kind: 'buffTeam', cost: 18, cd: 15, buff: 'bless', range: 12 },
+      { id: 'dard', label: 'Dard', kind: 'bolt', cost: 6, cd: 1.9, range: 7.5, power: 23 },
+      { id: 'poussiere_entrain', label: 'Poussière d’entrain', kind: 'zone', cost: 20, cd: 14, range: 5, radius: 3.6, duration: 10, applies: { haste: 1 }, allies: true },
+      { id: 'chant_bravoure', label: 'Chant de bravoure', kind: 'buffTeam', cost: 18, cd: 12, buff: 'bless', range: 12 },
       { id: 'bond_farceur', label: 'Bond farceur', kind: 'dash', cost: 10, cd: 7, distance: 6, blessAlly: true },
     ],
   },

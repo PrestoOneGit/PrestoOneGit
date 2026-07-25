@@ -1108,11 +1108,17 @@ export class TowerRun {
       }
       case 'raise': {
         const near = this.corpses.filter((c) => len2(c.x - hero.x, c.z - hero.z) <= range)
-        if (near.length === 0) return
         const mine = this.summons.filter((s) => s.owner === hero.slot)
         const room = ab.max - mine.length
         if (room <= 0) return
         commit()
+        if (near.length === 0) {
+          // Sans cadavre, le nécromancien tire un squelette de la terre :
+          // un seul, contre autant que de corps disponibles. La capacité
+          // reste utile en ouverture d'étage, où rien n'est encore mort.
+          this.spawnSummon(hero, ab.summon, [hero.x, hero.z])
+          hero.stats.summoned++
+        }
         for (const c of near.slice(0, room)) {
           this.spawnSummon(hero, ab.summon, [c.x, c.z])
           c.life = 0
@@ -1178,6 +1184,16 @@ export class TowerRun {
         }
         if (!taunted) return
         commit()
+        // La provocation frappe aussi : sans dégâts, le kit défensif du
+        // Chevalier ne produisait rien que la sélection puisse voir, et la
+        // classe disparaissait de la population en 25 générations.
+        if (ab.power) {
+          const r = (ab.radius ?? range) * (hero.mult.range ?? 1)
+          for (const m of this.monsters) {
+            if (len2(m.x - hero.x, m.z - hero.z) > r) continue
+            this.hurtMonster(hero, m, this.outgoing(hero, ab.power, false))
+          }
+        }
         this.emit({ t: 'taunt', at: [hero.x, hero.z], r: range })
         break
       }
