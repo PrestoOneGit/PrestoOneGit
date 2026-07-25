@@ -21,8 +21,10 @@ export const ABILITY_SLOTS = 4 // un agent ne porte jamais plus de 4 capacités
 //    6  capteurs de murs
 //   10  portail / piège / cadavre proches + invocations
 //    4  contexte (étage, densité, repos, boss)
+//    1  endurance
+//    7  butin le plus proche (direction, distance, nature, temps restant)
 //   63  cartes du draft (3 × 21 : type, axes d'effet, famille, échelles)
-export const INPUT_SIZE = 156
+export const INPUT_SIZE = 164
 export const HIDDEN = 24
 
 // Découpage des sorties :

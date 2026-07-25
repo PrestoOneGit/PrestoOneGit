@@ -227,6 +227,46 @@ export const REINFORCEMENTS = [
   { id: 'portee_sort', label: 'Portée accrue', desc: '+30 % de portée', field: 'range', mult: 1.3, needs: 'range' },
 ]
 
+// ─────────────────────────── BUTIN ───────────────────────────
+// Ce qu'un monstre laisse en mourant. Trois raisons de l'ajouter, et
+// aucune n'est décorative :
+//
+//   — l'effondrement d'une équipe est aujourd'hui STRUCTUREL. Mesuré : sur
+//     7 runs, 5 voient trois agents tomber en moins de 60 secondes. Un
+//     agent meurt, l'équipe inflige moins, les monstres s'accumulent, tout
+//     s'écroule. Rien ne permet de reprendre pied en cours d'étage ;
+//   — un objet tombe LÀ OÙ le monstre est mort, donc au contact. Aller le
+//     chercher expose, et c'est une décision spatiale sous risque sur un
+//     plateau qui en a les moyens (murs, pièges, portails) ;
+//   — il faut choisir QUI le ramasse. C'est de la coordination, ce que ce
+//     projet cherche à observer.
+//
+// Durée de vie courte : sans elle, l'objet attend sagement la fin du
+// combat et ne force aucun arbitrage.
+export const DROPS = {
+  vie: { label: 'Fiole de vie', heal: 0.3, color: '#d1584a', life: 14, weight: 5 },
+  mana: { label: 'Fiole de mana', mana: 0.45, color: '#4a7fb5', life: 14, weight: 3 },
+  essence: { label: 'Essence', applies: { bless: 8, haste: 6 }, color: '#c9a96e', life: 10, weight: 2 },
+}
+
+export const DROP_CHANCE = 0.16 // par monstre ordinaire
+export const DROP_CHANCE_ELITE = 0.55 // élites et boss
+export const DROP_PICKUP_RADIUS = 1.1
+
+// ─────────────────────────── ENDURANCE ───────────────────────────
+// La mobilité était gratuite hors recharge. Mesuré : 70,2 % des dash
+// partaient sans aucun monstre à moins de 12 unités — les agents s'en
+// servaient comme accélérateur de voyage, un usage que le kit ne
+// revendiquait pas. Ce n'est pas fautif, mais c'est sans arbitrage.
+//
+// Une jauge partagée entre les trois déplacements en fait un choix :
+// brûler pour traverser, ou garder pour esquiver quand ça frappe. Même
+// logique que les repos, qui sont rares — et que l'évolution a appris à
+// économiser, de 89 % à 51 % de PV.
+export const STAMINA_MAX = 100
+export const STAMINA_REGEN = 9 // par seconde
+export const STAMINA_COST = { dash: 28, sprint: 45, jump: 34 }
+
 export const CARDS_PER_LEVEL = 3
 export const UPGRADE_EVERY = 1 // un draft à chaque étage franchi
 

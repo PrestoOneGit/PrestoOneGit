@@ -8,10 +8,12 @@
 // Le moteur n'applique que les règles (data.js) et le terrain (terrain.js).
 
 import {
-  CARDS_PER_LEVEL, CLASSES, ELITE_CHANCE, ELITE_FROM_FLOOR, ELITE_MULT,
+  CARDS_PER_LEVEL, CLASSES, DROPS, DROP_CHANCE, DROP_CHANCE_ELITE,
+  DROP_PICKUP_RADIUS, ELITE_CHANCE, ELITE_FROM_FLOOR, ELITE_MULT,
   FLOOR_BUDGET, FLOOR_TIME_LIMIT, HEAVY_HIT_THRESHOLD, INTERACTIONS, MAX_FLOOR,
   MONSTERS, MONSTER_POWER, PASSIVES, REGEN_BETWEEN_FLOORS, REINFORCEMENTS,
-  RESTS_PER_RUN, REVIVES_PER_AGENT, STATES, SUMMONS, tierForFloor,
+  RESTS_PER_RUN, REVIVES_PER_AGENT, STAMINA_COST, STAMINA_MAX, STAMINA_REGEN,
+  STATES, SUMMONS, tierForFloor,
 } from './data.js'
 import { Terrain, BOARD, HALF } from './terrain.js'
 import { RING5, arch, len2, powInt } from './exact.js'
@@ -107,6 +109,7 @@ export class TowerRun {
     this.monsters = []
     this.summons = []
     this.corpses = []
+    this.drops = []
     this.zones = [] // sanctuaires, nuées, poussières
     this.nextId = 1
     this.monstersKilled = 0
@@ -129,6 +132,7 @@ export class TowerRun {
         z: rs * 2.5,
         headX: rc, // cap courant, lissé (voir TURN_BLEND)
         headZ: rs,
+        stamina: STAMINA_MAX,
         level: 1,
         // Le draft : on démarre avec la seule capacité de départ.
         abilities: [cls.abilities.find((ab) => ab.id === cls.starter) ?? cls.abilities[0]].map(clone),
@@ -237,6 +241,7 @@ export class TowerRun {
     this.floorTime = 0
     this.monsters = []
     this.corpses = []
+    this.drops = [] // le butin ne survit pas à l'étage
     this.zones = []
     this.floorKilled = 0
     this.terrain = new Terrain(this.rng, floor)
@@ -441,6 +446,7 @@ export class TowerRun {
       hero.cds = [0, 0, 0, 0]
       hero.cdBasic = 0
       hero.mobilityCds = { dash: 0, sprint: 0, jump: 0 }
+      hero.stamina = STAMINA_MAX
       hero.sprintLeft = 0
       hero.airborne = 0
       hero.jumpHeight = 0
@@ -635,6 +641,7 @@ export class TowerRun {
     this.emit({ t: 'monsterDie', at: [m.x, m.z], size: m.size })
     // Cadavre exploitable par le Nécromancien et les goules.
     this.corpses.push({ id: this.nextId++, x: m.x, z: m.z, life: 18, type: m.type })
+    this.maybeDrop(m)
     // Un slime se scinde ; un squelette ou une goule peut se relever.
     if (m.splitLeft > 0) {
       for (let i = 0; i < 2; i++) {
@@ -778,6 +785,30 @@ export class TowerRun {
 
     // Contexte
     obs[k++] = Math.min(this.floor / 60, 1) // saturé : au-delà, l'étage exact n'apprend plus rien
+    // Endurance : sans cette entrée, le réseau dépenserait à l'aveugle.
+    obs[k++] = hero.stamina / STAMINA_MAX
+    // Butin le plus proche : direction, distance, et de quoi il s'agit.
+    // Trois natures seulement, donc un encodage direct suffit.
+    {
+      let best = null
+      let bd = Infinity
+      for (const d of this.drops) {
+        const dd = (d.x - hero.x) ** 2 + (d.z - hero.z) ** 2
+        if (dd < bd) { bd = dd; best = d }
+      }
+      if (best) {
+        const dist = Math.sqrt(bd)
+        obs[k++] = (best.x - hero.x) / BOARD
+        obs[k++] = (best.z - hero.z) / BOARD
+        obs[k++] = 1 - Math.min(dist / 20, 1)
+        obs[k++] = best.type === 'vie' ? 1 : 0
+        obs[k++] = best.type === 'mana' ? 1 : 0
+        obs[k++] = best.type === 'essence' ? 1 : 0
+        obs[k++] = Math.min(best.life / 14, 1) // temps restant avant disparition
+      } else {
+        for (let i = 0; i < 7; i++) obs[k++] = 0
+      }
+    }
     obs[k++] = Math.min(this.monsters.length / 12, 1)
     obs[k++] = this.restsLeft / RESTS_PER_RUN
     obs[k++] = this.floor % 10 === 0 ? 1 : 0
@@ -826,6 +857,7 @@ export class TowerRun {
     for (const key of Object.keys(hero.mobilityCds)) hero.mobilityCds[key] -= dt
     hero.sprintLeft = Math.max(0, hero.sprintLeft - dt)
     hero.mana = Math.min(hero.maxMana, hero.mana + hero.cls.manaRegen * hero.mult.mana * dt)
+    hero.stamina = Math.min(STAMINA_MAX, hero.stamina + STAMINA_REGEN * dt)
 
     if (hero.airborne > 0) {
       hero.airborne -= dt
@@ -849,8 +881,9 @@ export class TowerRun {
 
     // Mobilité générique
     if (mag > 0.05) {
-      if (out[OUT_MOBILITY + 2] > 0.5 && hero.mobilityCds.jump <= 0) {
+      if (out[OUT_MOBILITY + 2] > 0.5 && hero.mobilityCds.jump <= 0 && hero.stamina >= STAMINA_COST.jump) {
         const j = MOBILITY.jump
+        hero.stamina -= STAMINA_COST.jump
         hero.mobilityCds.jump = j.cd * cdMult
         hero.airborne = j.airTime
         hero.jumpFrom = [hero.x, hero.z]
@@ -859,14 +892,16 @@ export class TowerRun {
         this.emit({ t: 'jump', from: [hero.x, hero.z], to: hero.jumpTo, slot: hero.slot })
         return
       }
-      if (out[OUT_MOBILITY] > 0.5 && hero.mobilityCds.dash <= 0) {
+      if (out[OUT_MOBILITY] > 0.5 && hero.mobilityCds.dash <= 0 && hero.stamina >= STAMINA_COST.dash) {
+        hero.stamina -= STAMINA_COST.dash
         hero.mobilityCds.dash = MOBILITY.dash.cd * cdMult
         const from = [hero.x, hero.z]
         this.terrain.move(hero, dirX * MOBILITY.dash.distance, dirZ * MOBILITY.dash.distance)
         hero.stats.dash++
         this.emit({ t: 'dash', from, to: [hero.x, hero.z], slot: hero.slot })
       }
-      if (out[OUT_MOBILITY + 1] > 0.5 && hero.mobilityCds.sprint <= 0) {
+      if (out[OUT_MOBILITY + 1] > 0.5 && hero.mobilityCds.sprint <= 0 && hero.stamina >= STAMINA_COST.sprint) {
+        hero.stamina -= STAMINA_COST.sprint
         hero.mobilityCds.sprint = MOBILITY.sprint.cd * cdMult
         hero.sprintLeft = MOBILITY.sprint.duration
         hero.stats.sprint++
@@ -1468,6 +1503,57 @@ export class TowerRun {
     }
   }
 
+  // Un monstre laisse-t-il quelque chose ? Les élites et les boss beaucoup
+  // plus souvent : c'est ce qui rend un combat difficile payant.
+  maybeDrop(m) {
+    const chance = m.boss || m.elite ? DROP_CHANCE_ELITE : DROP_CHANCE
+    if (this.rng() >= chance) return
+    const types = Object.keys(DROPS)
+    const total = types.reduce((s, t) => s + DROPS[t].weight, 0)
+    let r = this.rng() * total
+    let type = types[0]
+    for (const t of types) {
+      r -= DROPS[t].weight
+      if (r <= 0) { type = t; break }
+    }
+    const spec = DROPS[type]
+    this.drops.push({ id: this.nextId++, x: m.x, z: m.z, type, spec, life: spec.life })
+    this.emit({ t: 'drop', at: [m.x, m.z], type, color: spec.color })
+  }
+
+  // Ramassage au contact, expiration sinon. La durée de vie courte est le
+  // cœur du dispositif : sans elle, l'objet attendrait la fin du combat et
+  // n'imposerait aucun arbitrage entre rester groupé et aller le chercher.
+  stepDrops(dt) {
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const d = this.drops[i]
+      d.life -= dt
+      let pris = null
+      for (const h of this.heroes) {
+        if (!h.alive) continue
+        if (len2(h.x - d.x, h.z - d.z) > DROP_PICKUP_RADIUS) continue
+        pris = h
+        break
+      }
+      if (pris) {
+        const s = d.spec
+        if (s.heal) {
+          pris.hp = Math.min(pris.maxHp, pris.hp + pris.maxHp * s.heal)
+          pris.healing += pris.maxHp * s.heal
+        }
+        if (s.mana) pris.mana = Math.min(pris.maxMana, pris.mana + pris.maxMana * s.mana)
+        if (s.applies) this.applyStates(pris, s.applies)
+        pris.stats.drops = (pris.stats.drops ?? 0) + 1
+        this.mark('drop', { agent: pris.cls.label, slot: pris.slot, objet: s.label })
+        this.emit({ t: 'pickup', at: [d.x, d.z], slot: pris.slot, color: s.color })
+        this.drops.splice(i, 1)
+      } else if (d.life <= 0) {
+        this.emit({ t: 'dropGone', at: [d.x, d.z] })
+        this.drops.splice(i, 1)
+      }
+    }
+  }
+
   stepZones(dt) {
     for (let i = this.zones.length - 1; i >= 0; i--) {
       const z = this.zones[i]
@@ -1543,6 +1629,7 @@ export class TowerRun {
     for (const m of this.monsters) this.stepMonster(m, dt)
     for (const s of this.summons) this.stepSummon(s, dt)
     this.stepZones(dt)
+    this.stepDrops(dt)
     this.spreadShock()
 
     for (let i = this.monsters.length - 1; i >= 0; i--) {

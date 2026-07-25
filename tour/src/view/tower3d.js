@@ -61,6 +61,7 @@ export class Tower3D {
     this.monsterMeshes = new Map()
     this.summonMeshes = new Map()
     this.corpseMeshes = new Map()
+    this.dropMeshes = new Map()
     this.zoneMeshes = new Map()
     this.vfx = []
     this.run = null
@@ -843,6 +844,34 @@ export class Tower3D {
         this.group.remove(mesh)
         this.summonMeshes.delete(id)
       }
+    }
+
+    // Butin au sol : fiole qui flotte et tourne, pour qu'on la repère de
+    // loin. Elle clignote quand elle est sur le point de disparaître —
+    // c'est cette échéance qui force l'arbitrage.
+    for (const d of run.drops ?? []) {
+      let mesh = this.dropMeshes.get(d.id)
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          this.geo('drop', () => new THREE.OctahedronGeometry(0.28, 0)),
+          new THREE.MeshStandardMaterial({
+            color: d.spec.color, emissive: d.spec.color, emissiveIntensity: 1.2, flatShading: true,
+          })
+        )
+        this.dropMeshes.set(d.id, mesh)
+        this.group.add(mesh)
+      }
+      mesh.position.set(d.x, 0.55 + Math.sin(elapsed * 3 + d.id) * 0.12, d.z)
+      mesh.rotation.y += dt * 2.2
+      const fin = d.life < 4
+      mesh.visible = !fin || Math.sin(elapsed * 14) > -0.3
+      mesh.material.emissiveIntensity = fin ? 1.8 : 1.2
+    }
+    for (const [id, mesh] of this.dropMeshes) {
+      if ((run.drops ?? []).some((d) => d.id === id)) continue
+      this.group.remove(mesh)
+      mesh.material.dispose()
+      this.dropMeshes.delete(id)
     }
 
     // Cadavres : ressource du Nécromancien, donc visibles
