@@ -344,12 +344,22 @@ export function tierForFloor(floor) {
 // « Très léger » comme demandé : sur trente étages cela ne représente
 // qu'un facteur 1,5, à comparer au facteur 4,7 de l'ancienne courbe qui
 // rendait la mort arithmétiquement programmée.
-export const MONSTER_GROWTH = 1.014
+// Montée en puissance des monstres. ELLE N'EST PLUS EXPONENTIELLE.
+//
+// C'était `1.014 ^ (étage - 1)`, ce qui donne x4 à l'étage 100 — correct —
+// mais x1030 à l'étage 500 et x1 076 259 à l'étage 1000. Une tour de mille
+// étages était donc mathématiquement close bien avant le millième.
+//
+// La rampe linéaire ci-dessous vaut x3,97 à l'étage 100, soit exactement la
+// même chose qu'avant : les cent premiers étages sont inchangés, seule la
+// suite devient jouable (x16 au 500ᵉ, x31 au 1000ᵉ). La difficulté continue
+// de venir surtout du NOMBRE de monstres, que FLOOR_BUDGET fait croître.
+export const MONSTER_POWER = (floor) => 1 + (floor - 1) * 0.03
 export const FLOOR_BUDGET = (floor) => 7 + floor * 3.4
 export const ELITE_FROM_FLOOR = 4
 export const ELITE_CHANCE = 0.22
 export const ELITE_MULT = { hp: 1.7, dmg: 1.4 }
-export const MAX_FLOOR = 100
+export const MAX_FLOOR = 1000
 export const RESTS_PER_RUN = 3
 
 // Le chronomètre s'adapte au contenu de l'étage. Un plafond fixe mesurait

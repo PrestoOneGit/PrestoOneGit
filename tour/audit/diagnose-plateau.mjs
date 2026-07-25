@@ -17,7 +17,7 @@
 import { TowerRun, runTower, mulberry32, TICK } from '../src/sim/engine.js'
 import { randomTeamGenome, crossoverTeams, mutateTeam, TEAM_GENOME_SIZE, describeComposition } from '../src/sim/brain.js'
 import {
-  CLASSES, FLOOR_BUDGET, MONSTER_GROWTH, MONSTERS, PASSIVES, tierForFloor,
+  CLASSES, FLOOR_BUDGET, MONSTER_POWER, MONSTERS, PASSIVES, tierForFloor,
 } from '../src/sim/data.js'
 import { mean } from './stats.js'
 
@@ -39,8 +39,8 @@ console.log('  ' + '─'.repeat(72))
 const baseHeroHp = CLASSES.reduce((s, c) => s + c.hp, 0)
 const teamHp = (baseHeroHp / CLASSES.length) * 5
 const ratios = []
-for (const floor of [1, 5, 10, 15, 20, 25, 30, 40]) {
-  const monMult = Math.pow(MONSTER_GROWTH, floor - 1)
+for (const floor of [1, 10, 25, 50, 100, 250, 500, 1000]) {
+  const monMult = MONSTER_POWER(floor)
   const tier = tierForFloor(floor)
   const avgCost = mean(tier.pool.map((t) => MONSTERS[t].cost))
   const avgHp = mean(tier.pool.map((t) => MONSTERS[t].hp))
@@ -53,11 +53,11 @@ for (const floor of [1, 5, 10, 15, 20, 25, 30, 40]) {
   )
 }
 console.log(
-  `\n  Les monstres croissent de ${((MONSTER_GROWTH - 1) * 100).toFixed(1)} % par étage ; les agents, de 0 % —` +
-    ' le draft ne donne plus de stats.'
+  `\n  Les monstres gagnent ${((MONSTER_POWER(2) - 1) * 100).toFixed(1)} % de puissance par étage, en rampe LINÉAIRE ;` +
+    ' les agents, 0 % — le draft ne donne plus de stats.'
 )
 console.log(
-  `  Le rapport de PV passe de ${ratios[0][1].toFixed(1)}× au 1ᵉʳ étage à ${ratios.at(-1)[1].toFixed(1)}× au 40ᵉ.` +
+  `  Le rapport de PV passe de ${ratios[0][1].toFixed(1)}× au 1ᵉʳ étage à ${ratios.at(-1)[1].toFixed(1)}× au 1000ᵉ.` +
     ' Une équipe ne peut le compenser'
 )
 console.log('  que par la tactique : positionnement, pièges, portails scellés, contrôle.')

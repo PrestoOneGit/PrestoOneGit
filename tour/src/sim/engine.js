@@ -10,7 +10,7 @@
 import {
   CARDS_PER_LEVEL, CLASSES, ELITE_CHANCE, ELITE_FROM_FLOOR, ELITE_MULT,
   FLOOR_BUDGET, FLOOR_TIME_LIMIT, HEAVY_HIT_THRESHOLD, INTERACTIONS, MAX_FLOOR,
-  MONSTERS, MONSTER_GROWTH, PASSIVES, REGEN_BETWEEN_FLOORS, REINFORCEMENTS,
+  MONSTERS, MONSTER_POWER, PASSIVES, REGEN_BETWEEN_FLOORS, REINFORCEMENTS,
   RESTS_PER_RUN, REVIVES_PER_AGENT, STATES, SUMMONS, tierForFloor,
 } from './data.js'
 import { Terrain, BOARD, HALF } from './terrain.js'
@@ -279,7 +279,7 @@ export class TowerRun {
   spawnMonster(type, { boss = false, elite = false, at = null, summonedBy = null } = {}) {
     const t = MONSTERS[type]
     if (!t) return null
-    const scale = powInt(MONSTER_GROWTH, this.floor - 1)
+    const scale = MONSTER_POWER(this.floor)
     let hp = t.hp * scale
     let dmg = t.dmg * scale
     let size = t.size
@@ -777,7 +777,7 @@ export class TowerRun {
     obs[k++] = Math.min(this.summons.filter((s) => s.owner === hero.slot).length / 3, 1)
 
     // Contexte
-    obs[k++] = this.floor / MAX_FLOOR
+    obs[k++] = Math.min(this.floor / 60, 1) // saturé : au-delà, l'étage exact n'apprend plus rien
     obs[k++] = Math.min(this.monsters.length / 12, 1)
     obs[k++] = this.restsLeft / RESTS_PER_RUN
     obs[k++] = this.floor % 10 === 0 ? 1 : 0
