@@ -99,12 +99,13 @@ export function reportToMarkdown(report) {
   lines.push('')
   lines.push('## Agents et builds draftées')
   lines.push('')
-  lines.push('| Classe | Niv | Dégâts | Soins | Subis | Fin | Capacités | Passifs |')
-  lines.push('|---|---|---|---|---|---|---|---|')
+  lines.push('| Classe | Niv | Dégâts | Soins | Subis | Fin | Capacités | Passifs | Draft (dans l’ordre) |')
+  lines.push('|---|---|---|---|---|---|---|---|---|')
   for (const a of report.agents) {
     lines.push(
       `| ${a.label} | ${a.niveau} | ${a.degatsInfliges} | ${a.soins} | ${a.degatsSubis} | ` +
-        `${a.etageDeMort ? `étage ${a.etageDeMort}` : 'survit'} | ${a.capacites.join(', ')} | ${a.passifs.join(', ') || '—'} |`
+        `${a.etageDeMort ? `étage ${a.etageDeMort}` : 'survit'} | ${a.capacites.join(', ')} | ` +
+        `${a.passifs.join(', ') || '—'} | ${a.cartesPrises.join(' → ') || '—'} |`
     )
   }
   lines.push('')
@@ -151,6 +152,9 @@ export function compareReports(reports) {
         classe: a.label,
         capacites: a.capacites,
         passifs: a.passifs,
+        // L'ordre des choix en dit plus que la build finale : c'est là
+        // qu'on voit ce que le réseau priorise.
+        draft: a.cartesPrises,
       })),
       mobiliteTotale: r.agents.reduce(
         (s, a) => s + a.utilisation.dash + a.utilisation.course + a.utilisation.bond,

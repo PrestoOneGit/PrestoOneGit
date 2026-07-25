@@ -480,7 +480,10 @@ export class HUD {
 
     const agents = report.agents
       .map((a) => {
-        const up = a.ameliorations.map((u) => `${u.id} ×${u.rangs}`).join(', ') || '—'
+        // La « build » draftée, dans l'ordre des choix — capacités, passifs
+        // et renforts confondus. C'est ce qui a remplacé les anciens rangs
+        // d'amélioration.
+        const build = a.cartesPrises.join(' → ') || '—'
         const caps =
           a.utilisation.capacites
             .filter((c) => c.fois > 0)
@@ -493,7 +496,7 @@ export class HUD {
           <td class="num">${a.soins.toLocaleString('fr-FR')}</td>
           <td class="num">${a.degatsSubis.toLocaleString('fr-FR')}</td>
           <td class="${a.etageDeMort ? '' : 'muted'}">${a.etageDeMort ? `tombé étage ${a.etageDeMort}` : 'survit'}</td>
-          <td>${esc(up)}</td>
+          <td>${esc(build)}</td>
           <td class="num">${a.utilisation.dash}/${a.utilisation.course}/${a.utilisation.bond}</td>
           <td class="muted">${esc(caps)}</td>
         </tr>`
@@ -507,6 +510,7 @@ export class HUD {
         return `<tr>
           <td class="num">${f.etage}${f.echec ? ' ✗' : ''}</td>
           <td class="muted">${f.boss ? 'boss' : ''}</td>
+          <td class="muted">${esc(f.terrain)} · ${f.portails}p · ${f.pieges}pg</td>
           <td class="num">${f.duree}s</td>
           <td class="muted">${esc(monstres)}</td>
           <td class="num">${f.degatsInfliges.toLocaleString('fr-FR')}</td>
@@ -528,12 +532,12 @@ export class HUD {
       <h3>Agents</h3>
       <div class="table-scroll"><table>
         <thead><tr><th>Classe</th><th>Niv</th><th>Dégâts</th><th>Soins</th><th>Subis</th>
-        <th>Fin</th><th>Améliorations</th><th>Dash/Course/Bond</th><th>Capacités</th></tr></thead>
+        <th>Fin</th><th>Build draftée</th><th>Dash/Course/Bond</th><th>Capacités jouées</th></tr></thead>
         <tbody>${agents}</tbody>
       </table></div>
       <h3>Étage par étage</h3>
       <div class="table-scroll"><table>
-        <thead><tr><th>Étage</th><th></th><th>Durée</th><th>Monstres</th><th>Dégâts</th>
+        <thead><tr><th>Étage</th><th></th><th>Terrain</th><th>Durée</th><th>Monstres</th><th>Dégâts</th>
         <th>Subis</th><th>Pertes</th><th></th></tr></thead>
         <tbody>${floors}</tbody>
       </table></div>`
