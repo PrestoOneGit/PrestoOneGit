@@ -144,7 +144,7 @@ fichier, ouvrable par double-clic, partageable tel quel.
 | Taille des réseaux, mutations, croisement | `tour/src/sim/brain.js` |
 | Population, élites, graines par évaluation | `tour/src/ga/evolution.js` |
 | Modèles 3D, effets, niveaux de détail | `tour/src/view/tower3d.js` |
-| **Déposer des modèles `.glb`** | `tour/public/modeles/` — voir son `LISEZMOI.md` |
+| **Déposer des modèles `.glb`** | `tour/modeles/` — voir son `LISEZMOI.md` |
 | Interface, panneaux, rapports | `tour/src/ui/hud.js` |
 
 **Après toute modification des règles ou des réseaux** : relancer

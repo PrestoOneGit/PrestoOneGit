@@ -92,7 +92,7 @@ function startReplay(entry) {
   hud?.renderRecords(evolution?.records ?? [], entry.generation)
 }
 
-// Les modèles .glb éventuellement déposés dans public/modeles/ sont
+// Les modèles .glb éventuellement déposés dans modeles/ sont
 // chargés avant le premier rejeu. Aucun modèle = aucun problème : les
 // pions procéduraux restent la solution par défaut.
 await chargerModeles()

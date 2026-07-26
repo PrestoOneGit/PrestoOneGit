@@ -17,6 +17,7 @@
   import * as THREE from 'three'
   import { CLASSES } from '../src/sim/data.js'
   import { Tower3D } from '../src/view/tower3d.js'
+  import { chargerModeles } from '../src/view/modeles.js'
 
   // Planche de contrôle des modèles : les neuf classes alignées, éclairées
   // comme dans le jeu, avec le geste d'attaque joué en boucle. Sert à juger
@@ -42,6 +43,11 @@
   floor.position.y = -0.2
   floor.receiveShadow = true
   scene.add(floor)
+
+  // Les .glb doivent être là AVANT la première fabrication de maillage,
+  // sinon la planche montre les pions de repli et on croit à tort qu'aucun
+  // modèle n'a été reconnu.
+  await chargerModeles()
 
   const quality = new URLSearchParams(location.search).get('q') ?? 'deluxe'
   const tower = new Tower3D(scene, quality)

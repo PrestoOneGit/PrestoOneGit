@@ -391,8 +391,24 @@ export class Tower3D {
     if (q.lathe) {
       weapon = this.makeWeapon(hero.cls.id)
       if (weapon) {
+        // Les armes sont calibrées sur le pion tourné : corps lisse et
+        // large de 0,9, où l'arme porte à elle seule la lisibilité de la
+        // classe — d'où l'espadon démesuré du Berserk. Avec un corps
+        // sculpté la logique s'inverse : la silhouette se lit toute seule,
+        // et une arme de cette taille ne ressemble plus qu'à une planche.
+        // On la ramène donc au rang d'accessoire, calée sur la largeur
+        // réelle du modèle plutôt que sur une constante.
+        const boite = new THREE.Box3().setFromObject(corps)
+        const demiLargeur = Math.max(boite.max.x, -boite.min.x)
+        const k = Math.min(0.78, Math.max(0.55, demiLargeur / 0.3)) * 0.9
+        weapon.pivot.position.set(demiLargeur + 0.04, 0.74, 0.1)
+        weapon.pivot.scale.setScalar(k)
         g.add(weapon.pivot)
-        if (weapon.shield) g.add(weapon.shield)
+        // Le bouclier du Chevalier n'est PAS repris : c'est une simple
+        // dalle, immobile, et le modèle sculpté porte déjà son armure
+        // complète. Collée à côté d'un corps qui a des bras, elle se lisait
+        // comme un panneau posé là. Le pion, lui, la garde.
+        weapon.shield = null
       }
     }
     const hpBar = this.makeBar(0.9, 1.85, '#57c46a')
@@ -428,9 +444,9 @@ export class Tower3D {
   makeHeroMesh(hero) {
     const color = new THREE.Color(hero.cls.color)
     const q = this.quality
-    // Un modèle .glb déposé dans public/modeles/heros/ remplace le pion
-    // tourné. L'arme, les jauges et les animations restent identiques :
-    // seul le corps change.
+    // Un modèle .glb déposé dans `modeles/` remplace le pion tourné.
+    // L'arme, les jauges et les animations restent identiques : seul le
+    // corps change.
     const externe = q.lathe ? instancier('heros', hero.cls.id, HAUTEUR_HEROS) : null
     if (externe) return this.habillerHeros(hero, externe, color)
     const mat = new THREE.MeshStandardMaterial({

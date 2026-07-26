@@ -28,16 +28,41 @@ laissé de côté — le pion procédural continue de servir.
 
 **Invocations** : `slime_allie`, `golem_allie`, `squelette_allie`
 
-## Tu ne sais pas quel fichier est quoi ?
+## Tu arrives avec des fichiers bruts d'un générateur
 
-Dépose-les avec n'importe quel nom et lance :
+Deux outils, dans l'ordre.
+
+**1. Reconnaître.** Dépose les fichiers dans `modeles-brut/` (ignoré par
+git) avec leurs noms d'origine, puis :
 
 ```bash
 node audit/identifier-glb.mjs
 ```
 
-Il rend chaque modèle en image dans `audit/glb-apercu/`, avec un
-contact-sheet récapitulatif. Il suffit alors de regarder et de renommer.
+Il rend chaque modèle sur fond blanc sous trois angles dans
+`audit/glb-apercu/`. Il n'y a plus qu'à regarder et à remplir
+`audit/noms-modeles.json` : `nom de fichier` → `identifiant`. Une valeur
+`null` écarte un fichier (doublon, raté).
+
+**2. Dégraisser et renommer.**
+
+```bash
+node audit/degraisser-glb.mjs
+```
+
+Un modèle sorti d'un générateur pèse 15 à 20 Mo : quatre textures PBR en
+2048², pour un pion qui fait **27 pixels de haut** à la caméra par défaut.
+Le rendu du jeu est facetté et sans reflets — normales, rugosité et
+occlusion ne changent rien du tout à l'image.
+
+La couleur, elle, compte. Elle n'est donc pas jetée mais **reportée dans la
+géométrie** : chaque triangle est échantillonné au centre de ses UV, et la
+teinte obtenue devient celle de ses trois sommets. Le fichier ressort sans
+la moindre image, la pose normalisée, et le look facetté est un gain, pas
+une perte.
+
+Mesuré sur les 18 premiers modèles : **284,5 Mo → 10,8 Mo**, soit 96 % en
+moins, pour 4 500 à 6 500 triangles chacun — inchangés.
 
 ## Contraintes de modélisation
 
@@ -47,6 +72,9 @@ contact-sheet récapitulatif. Il suffit alors de regarder et de renommer.
 - **La hauteur exacte n'a pas d'importance** : le chargeur remet chaque
   modèle à l'échelle d'après `data.js` et replaque sa base sur le sol.
 - **Pas de compression Draco.**
+- **Pas d'armes ni de bras sur les héros** : l'arme est ajoutée par le code
+  (`makeWeapon` dans `tower3d.js`) pour pouvoir être animée à la frappe.
+  Une arme déjà modélisée sur le corps ferait doublon avec celle-ci.
 
 ## Deux conséquences
 

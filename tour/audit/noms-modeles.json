@@ -1,0 +1,28 @@
+{
+  "_lisezmoi": [
+    "Correspondance entre les fichiers sortis du générateur et les identifiants",
+    "du catalogue (tour/src/sim/data.js). Établie en regardant la planche de",
+    "contact produite par `node audit/identifier-glb.mjs`.",
+    "Une valeur nulle = fichier écarté (doublon, raté).",
+    "Utilisé par `node audit/degraisser-glb.mjs`."
+  ],
+  "Meshy_AI_Azure_Oracle_0726161029_texture.glb": "invocateur",
+  "Meshy_AI_Blue_Crystal_Wizard_0726160911_texture.glb": "mage",
+  "Meshy_AI_Crimson_Bat_Statue_0726160135_texture.glb": "chauve_souris",
+  "Meshy_AI_Crimson_Horned_Warlor_0726160902_texture.glb": "berserk",
+  "Meshy_AI_Crowned_Sentinel_0726160856_texture.glb": "chevalier",
+  "Meshy_AI_Emerald_Coil_0726152911_texture.glb": null,
+  "Meshy_AI_Emerald_Coil_0726160127_texture.glb": "serpent",
+  "Meshy_AI_Eye_of_the_Purple_Sen_0726160922_texture.glb": "occultiste",
+  "Meshy_AI_Granite_Guardian_0726160153_texture.glb": "golem_pierre",
+  "Meshy_AI_Grim_Sentinel_0726160059_texture.glb": "goule",
+  "Meshy_AI_Infernal_Knight_on_a__0726160116_texture.glb": "hobgobelin",
+  "Meshy_AI_Low_Poly_Orc_Warrior_0726160106_texture.glb": "orc",
+  "Meshy_AI_Midnight_Geometric_Sp_0726160145_texture.glb": "araignee",
+  "Meshy_AI_Pedestal_Skeleton_0726160051_texture.glb": "squelette",
+  "Meshy_AI_Skull_Sentinel_0726160946_texture.glb": "necromancien",
+  "Meshy_AI_Sun_King_0726160917_texture.glb": "clerc",
+  "Meshy_AI_Verdant_Ogre_0726160237_texture.glb": "troll",
+  "Meshy_AI_Verdant_Ranger_0726160906_texture.glb": "archere",
+  "Meshy_AI_Wolf_Knight_0726160140_texture.glb": "loup"
+}
