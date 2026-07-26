@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Planche des modèles</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14181a; }
+  canvas { display: block; }
+  #legend {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    display: flex; color: #cfd6da; font: 12px ui-monospace, monospace;
+    padding: 6px 0; background: #0f1214cc;
+  }
+  #legend span { flex: 1; text-align: center; }
+</style>
+<canvas id="c"></canvas>
+<div id="legend"></div>
+<script type="module">
+  import * as THREE from 'three'
+  import { CLASSES } from '../src/sim/data.js'
+  import { Tower3D } from '../src/view/tower3d.js'
+  import { chargerModeles } from '../src/view/modeles.js'
+
+  // Planche de contrôle des modèles : les neuf classes alignées, éclairées
+  // comme dans le jeu, avec le geste d'attaque joué en boucle. Sert à juger
+  // les silhouettes et les armes sans lancer un entraînement.
+  const canvas = document.getElementById('c')
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+  renderer.setPixelRatio(1)
+  renderer.setSize(innerWidth, innerHeight, false)
+  renderer.shadowMap.enabled = true
+
+  const scene = new THREE.Scene()
+  renderer.setClearColor('#14181a')
+  scene.add(new THREE.HemisphereLight('#9d8b78', '#4a3d33', 1.1))
+  const sun = new THREE.DirectionalLight('#ffd9a8', 1.7)
+  sun.position.set(6, 12, 8)
+  sun.castShadow = true
+  scene.add(sun)
+
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(40, 0.4, 12),
+    new THREE.MeshStandardMaterial({ color: '#4c463c', flatShading: true, roughness: 1 })
+  )
+  floor.position.y = -0.2
+  floor.receiveShadow = true
+  scene.add(floor)
+
+  // Les .glb doivent être là AVANT la première fabrication de maillage,
+  // sinon la planche montre les pions de repli et on croit à tort qu'aucun
+  // modèle n'a été reconnu.
+  await chargerModeles()
+
+  const quality = new URLSearchParams(location.search).get('q') ?? 'deluxe'
+  const tower = new Tower3D(scene, quality)
+  // On n'utilise que ses fabriques : le décor du jeu n'a rien à faire ici.
+  tower.group.visible = false
+
+  const SPACING = 1.9
+  const meshes = []
+  CLASSES.forEach((cls, i) => {
+    const mesh = tower.makeHeroMesh({ cls, slot: i, x: 0, z: 0 })
+    mesh.position.x = (i - (CLASSES.length - 1) / 2) * SPACING
+    mesh.rotation.y = 0.6
+    // Les jauges PV/mana appartiennent au jeu, pas à la planche.
+    mesh.userData.hpBar.visible = false
+    mesh.userData.manaBar.visible = false
+    scene.add(mesh)
+    meshes.push(mesh)
+  })
+  document.getElementById('legend').innerHTML =
+    CLASSES.map((c) => `<span>${c.label}</span>`).join('')
+
+  const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 100)
+  camera.position.set(0, 2.6, 9.5)
+  camera.lookAt(0, 0.85, 0)
+
+  const clock = new THREE.Clock()
+  let t = 0
+  function frame() {
+    requestAnimationFrame(frame)
+    const dt = Math.min(clock.getDelta(), 0.05)
+    t += dt
+    // Chaque classe rejoue son geste, décalée pour qu'on les compare.
+    meshes.forEach((m, i) => {
+      if (window.__hold != null) m.userData.swing = window.__hold
+      else {
+        const phase = (t * 0.55 + i * 0.11) % 1
+        if (phase < dt * 0.55) m.userData.swing = 1
+      }
+      tower.animateWeapon(m, dt)
+    })
+    renderer.render(scene, camera)
+  }
+  frame()
+  window.poser = (i) => { meshes[i].userData.swing = 1 }
+  window.figer = (v) => { window.__hold = v }
+  window.animer = () => { window.__hold = null }
+</script>

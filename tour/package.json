@@ -1,0 +1,22 @@
+{
+  "name": "tour",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "La Tour : des équipes d'aventuriers IA apprennent à grimper",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "vite build --config vite.single.config.js",
+    "preview": "vite preview",
+    "verifier-moteurs": "node audit/verif-moteurs.mjs",
+    "identifier-glb": "node audit/identifier-glb.mjs"
+  },
+  "dependencies": {
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Aperçu d'un .glb</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; }
+  canvas { display: block; }
+</style>
+<canvas id="c"></canvas>
+<script type="module">
+  import * as THREE from 'three'
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+
+  // Page de service : charge un .glb passé en paramètre et le rend sur
+  // fond blanc, cadré, sous trois angles. Sert à `identifier-glb.mjs`,
+  // qui l'automatise pour reconnaître des fichiers mal nommés.
+  const canvas = document.getElementById('c')
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
+  renderer.setPixelRatio(1)
+  renderer.setSize(innerWidth, innerHeight, false)
+
+  const scene = new THREE.Scene()
+  renderer.setClearColor('#ffffff')
+  scene.add(new THREE.HemisphereLight('#ffffff', '#b0b0b0', 1.6))
+  const key = new THREE.DirectionalLight('#ffffff', 1.5)
+  key.position.set(4, 8, 6)
+  scene.add(key)
+  const fill = new THREE.DirectionalLight('#ffffff', 0.6)
+  fill.position.set(-5, 3, -4)
+  scene.add(fill)
+
+  const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 1000)
+  const loader = new GLTFLoader()
+
+  window.charger = async (url, angleDeg = 0) => {
+    scene.children
+      .filter((o) => o.userData.modele)
+      .forEach((o) => scene.remove(o))
+    const gltf = await loader.loadAsync(url)
+    const objet = gltf.scene
+    objet.userData.modele = true
+
+    // Recentrer et cadrer, quelle que soit l'échelle d'export.
+    const boite = new THREE.Box3().setFromObject(objet)
+    const taille = new THREE.Vector3()
+    const centre = new THREE.Vector3()
+    boite.getSize(taille)
+    boite.getCenter(centre)
+    objet.position.sub(centre)
+    objet.position.y += taille.y / 2 // base à y = 0
+    const pivot = new THREE.Group()
+    pivot.add(objet)
+    pivot.rotation.y = (angleDeg * Math.PI) / 180
+    pivot.userData.modele = true
+    scene.add(pivot)
+
+    const rayon = Math.max(taille.x, taille.y, taille.z)
+    const d = rayon / (2 * Math.tan((camera.fov * Math.PI) / 360)) * 1.9
+    camera.position.set(0, taille.y * 0.55, d)
+    camera.lookAt(0, taille.y * 0.45, 0)
+
+    // Compte de triangles et couleurs dominantes : utile pour identifier.
+    let tris = 0
+    const couleurs = []
+    objet.traverse((o) => {
+      if (!o.isMesh) return
+      const g = o.geometry
+      tris += (g.index?.count ?? g.attributes.position?.count ?? 0) / 3
+      const mats = Array.isArray(o.material) ? o.material : [o.material]
+      for (const m of mats) if (m?.color) couleurs.push('#' + m.color.getHexString())
+    })
+    renderer.render(scene, camera)
+    return {
+      triangles: Math.round(tris),
+      dimensions: [taille.x, taille.y, taille.z].map((v) => Number(v.toFixed(3))),
+      couleurs: [...new Set(couleurs)].slice(0, 8),
+    }
+  }
+  window.pret = true
+</script>

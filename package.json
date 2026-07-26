@@ -1,0 +1,22 @@
+{
+  "name": "prestoonegit-simulations",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Simulations 3D dans le navigateur : La Tour, L'Arène, Vallon",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "setup": "npm --prefix tour install && npm --prefix arene install && npm --prefix vallon install",
+    "tour": "npm --prefix tour run dev",
+    "arene": "npm --prefix arene run dev",
+    "vallon": "npm --prefix vallon run dev",
+    "audit": "node tour/audit/audit.mjs",
+    "audit:rapide": "node tour/audit/audit.mjs --rapide",
+    "diagnostic": "node tour/audit/diagnose-ga.mjs",
+    "build": "npm --prefix tour run build:single",
+    "verifier": "node tour/audit/cross-check.mjs",
+    "verifier-moteurs": "node tour/audit/verif-moteurs.mjs",
+    "identifier-glb": "node tour/audit/identifier-glb.mjs"
+  }
+}

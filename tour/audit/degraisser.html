@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Dégraissage d'un .glb</title>
+<canvas id="c" width="8" height="8"></canvas>
+<script type="module">
+  import * as THREE from 'three'
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+  import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+
+  // Page de service pour `degraisser-glb.mjs`.
+  //
+  // Les modèles sortis d'un générateur arrivent avec quatre textures PBR de
+  // 2048² — 15 à 20 Mo par créature, pour des pions qui font 27 pixels à
+  // l'écran. Le rendu du jeu est facetté et sans reflets : ces textures ne
+  // servent à rien, elles rendent seulement le projet inchargeable.
+  //
+  // On ne les jette pas pour autant : la COULEUR est ce qui rend un modèle
+  // lisible. On la reporte donc dans la géométrie. Chaque triangle est
+  // échantillonné au centre de ses UV, et la couleur obtenue devient celle
+  // de ses trois sommets. Résultat : mêmes teintes, look facetté assumé, et
+  // plus une seule image dans le fichier.
+
+  const loader = new GLTFLoader()
+  const exporter = new GLTFExporter()
+
+  // Une texture (ImageBitmap la plupart du temps) → tableau de pixels.
+  function pixels(texture) {
+    const img = texture.image
+    const w = img.width, h = img.height
+    if (!w || !h) return null
+    const cv = new OffscreenCanvas(w, h)
+    const ctx = cv.getContext('2d', { willReadFrequently: true })
+    ctx.drawImage(img, 0, 0)
+    return { data: ctx.getImageData(0, 0, w, h).data, w, h }
+  }
+
+  const teinte = new THREE.Color()
+
+  // uv → couleur linéaire. Les UV glTF ont l'origine en haut à gauche, et
+  // GLTFLoader met flipY = false : la ligne v = 0 est bien la ligne 0 de
+  // l'image, sans retournement à compenser.
+  function echantillonner(tex, u, v, sortie) {
+    const x = Math.min(tex.w - 1, Math.max(0, Math.floor(((u % 1) + 1) % 1 * tex.w)))
+    const y = Math.min(tex.h - 1, Math.max(0, Math.floor(((v % 1) + 1) % 1 * tex.h)))
+    const i = (y * tex.w + x) * 4
+    // La texture de base est en sRGB, COLOR_0 est linéaire : la conversion
+    // est faite par setRGB, sinon tout ressort délavé.
+    sortie.setRGB(tex.data[i] / 255, tex.data[i + 1] / 255, tex.data[i + 2] / 255, THREE.SRGBColorSpace)
+  }
+
+  window.degraisser = async (url) => {
+    const gltf = await loader.loadAsync(url)
+    const racine = gltf.scene
+    const rapport = { trianglesAvant: 0, textures: 0, meshes: 0 }
+    const aJeter = []
+
+    const maillages = []
+    racine.traverse((o) => { if (o.isMesh) maillages.push(o) })
+
+    for (const mesh of maillages) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      const source = mats[0]
+      const carte = source?.map ? pixels(source.map) : null
+      if (source?.map) rapport.textures++
+
+      // Dé-indexer : chaque triangle devient indépendant, ce qui permet de
+      // lui donner UNE couleur et une normale plates. C'est exactement le
+      // rendu qu'on veut, et ça supprime les coutures d'UV au passage.
+      let geo = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()
+      const pos = geo.attributes.position
+      const n = pos.count
+      rapport.trianglesAvant += n / 3
+      const uv = geo.attributes.uv
+      const couleurs = new Float32Array(n * 3)
+
+      const repli = source?.color ? source.color : new THREE.Color(0xffffff)
+      for (let t = 0; t < n; t += 3) {
+        if (carte && uv) {
+          // Centre du triangle dans l'espace UV : plus robuste qu'un sommet,
+          // qui peut tomber pile sur une bordure d'îlot.
+          const u = (uv.getX(t) + uv.getX(t + 1) + uv.getX(t + 2)) / 3
+          const v = (uv.getY(t) + uv.getY(t + 1) + uv.getY(t + 2)) / 3
+          echantillonner(carte, u, v, teinte)
+          teinte.multiply(repli)
+        } else {
+          teinte.copy(repli)
+        }
+        for (let k = 0; k < 3; k++) {
+          couleurs[(t + k) * 3] = teinte.r
+          couleurs[(t + k) * 3 + 1] = teinte.g
+          couleurs[(t + k) * 3 + 2] = teinte.b
+        }
+      }
+
+      // Tout ce qui reste est du poids mort : UV sans texture, tangentes,
+      // deuxième jeu d'UV, couleurs d'origine.
+      for (const nom of Object.keys(geo.attributes)) {
+        if (nom !== 'position') geo.deleteAttribute(nom)
+      }
+      geo.setAttribute('color', new THREE.BufferAttribute(couleurs, 3))
+      geo.computeVertexNormals() // plates, puisque la géométrie est dé-indexée
+
+      for (const m of mats) {
+        if (!m) continue
+        for (const clef of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'specularMap', 'bumpMap', 'alphaMap']) {
+          if (m[clef]) { aJeter.push(m[clef]); m[clef] = null }
+        }
+      }
+      mesh.geometry.dispose()
+      mesh.geometry = geo
+      mesh.material = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        flatShading: true,
+        roughness: 0.9,
+        metalness: 0,
+      })
+      rapport.meshes++
+    }
+    for (const t of aJeter) t.dispose?.()
+
+    // Normaliser la pose : centré en XZ, pieds à y = 0, hauteur 1. Le jeu
+    // remet ensuite à l'échelle voulue, mais partir d'un repère commun
+    // évite qu'un modèle exporté en centimètres passe inaperçu.
+    racine.updateMatrixWorld(true)
+    const boite = new THREE.Box3().setFromObject(racine)
+    const taille = new THREE.Vector3(), centre = new THREE.Vector3()
+    boite.getSize(taille); boite.getCenter(centre)
+    const k = taille.y > 1e-9 ? 1 / taille.y : 1
+    const enveloppe = new THREE.Group()
+    racine.position.set(-centre.x, -boite.min.y, -centre.z)
+    enveloppe.add(racine)
+    enveloppe.scale.setScalar(k)
+
+    const bin = await exporter.parseAsync(enveloppe, { binary: true, onlyVisible: false })
+    rapport.octets = bin.byteLength
+    rapport.dimensions = [taille.x, taille.y, taille.z].map((v) => Number(v.toFixed(3)))
+    rapport.triangles = Math.round(rapport.trianglesAvant)
+    // Playwright ne sait pas rapatrier un ArrayBuffer : on repasse par un
+    // tableau ordinaire, décodé côté Node.
+    return { rapport, donnees: Array.from(new Uint8Array(bin)) }
+  }
+  window.pret = true
+</script>

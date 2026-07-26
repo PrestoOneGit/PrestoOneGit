@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>L’Arène — des IA apprennent à combattre</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <header class="hud-top">
+        <div class="hud-title">
+          <h1>L’Arène</h1>
+          <p id="gen-info">Génération 0 — en attente</p>
+        </div>
+        <div class="hud-controls">
+          <div class="hud-replay" id="replay-info">Rejeu : —</div>
+          <div class="hud-speed" role="group" aria-label="Vitesse du rejeu">
+            <button data-rspeed="0" aria-label="Pause du rejeu">II</button>
+            <button data-rspeed="1" class="active">x1</button>
+            <button data-rspeed="2">x2</button>
+            <button data-rspeed="4">x4</button>
+          </div>
+          <button id="ghosts" class="hud-btn hud-btn-secondary">Fantômes : 3</button>
+          <button id="pause-evo" class="hud-btn hud-btn-secondary">Suspendre l’évolution</button>
+          <button id="reset" class="hud-btn">Nouveau départ</button>
+        </div>
+      </header>
+
+      <aside class="right-col">
+        <section class="workers-panel">
+          <h2 id="workers-title">Simulations parallèles</h2>
+          <div class="workers-grid" id="workers-grid"></div>
+        </section>
+        <section class="records-panel">
+          <h2>Rejeux — matchs records</h2>
+          <ol id="records-list"></ol>
+        </section>
+      </aside>
+
+      <aside class="team-panel" id="team-panel">
+        <h2>Meilleure équipe — <span id="team-gen">gén. 0</span></h2>
+        <div class="team-grid" id="team-grid"></div>
+      </aside>
+
+      <footer class="bottom-panel">
+        <div class="chart-box">
+          <h2>Progression de la fitness</h2>
+          <canvas id="chart" width="360" height="110"></canvas>
+        </div>
+        <div class="log-box">
+          <h2>Journal d’apprentissage</h2>
+          <ul id="log"></ul>
+        </div>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
