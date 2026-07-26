@@ -6,22 +6,51 @@ import TowerWorker from './worker.js?worker&inline'
 // Neuro-évolution : une population d'équipes (composition + cerveaux),
 // évaluée en parallèle dans un pool de Web Workers.
 
-const POP_SIZE = 32
-const ELITES = 4
-const FRESH = 2
+// ─── Réglages, ajustables SANS toucher au code ───
+//
+// L'audit a identifié la contrainte principale du projet : le génome fait
+// ~21 900 paramètres pour une population de 32, soit près de 700 paramètres
+// par individu évalué. Un algorithme génétique explore correctement
+// quelques centaines de paramètres à cette taille de population. Ce n'est
+// donc pas la vitesse par run qui bride, c'est le NOMBRE d'équipes par
+// génération — et c'est le seul bouton qui vaille vraiment d'être tourné.
+//
+// D'où ces paramètres d'URL, pour pouvoir monter la population sur une
+// machine qui a les cœurs, sans rien recompiler :
+//
+//   ?pop=96          population par génération  (défaut 32, max 512)
+//   ?workers=11      workers en parallèle       (défaut : cœurs - 1)
+//   ?seeds=4         graines par évaluation     (défaut 4)
+//
+// Élites et immigrants suivent la population pour garder les mêmes
+// proportions : à pop 32 c'était 4 et 2, soit 12,5 % et 6 %.
+const params = new URLSearchParams(typeof location !== 'undefined' ? location.search : '')
+const lire = (nom, defaut, min, max) => {
+  const v = Number.parseInt(params.get(nom) ?? '', 10)
+  return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : defaut
+}
+
+export const POP_SIZE = lire('pop', 32, 8, 512)
+const ELITES = Math.max(2, Math.round(POP_SIZE * 0.125))
+const FRESH = Math.max(1, Math.round(POP_SIZE * 0.0625))
 // Nombre de graines par évaluation. Mesuré (audit/experiment-seeds.mjs) :
 // avec 2 graines, le champion est autant « chanceux sur ces deux
 // configurations » que bon — 20 % de son score ne se transfère pas à des
 // graines inédites, et cette part ne s'hérite pas. Avec 4, le biais tombe
 // à 3-4 % et l'avantage sur une recherche aléatoire à budget égal est
 // maximal (+1416 points contre +1007 à 2 graines, +473 à 8).
-const SEEDS_PER_EVAL = 4
+const SEEDS_PER_EVAL = lire('seeds', 4, 1, 16)
 const ARCHIVE_LIMIT = 400 // champions conservés en mémoire, pour rejouer
 const RECORD_LIMIT = 60 // records conservés et sauvegardés
 export const AUTOSAVE_EVERY = 10
 
 // Source unique pour le nombre de workers : le HUD s'aligne dessus.
-export const WORKER_COUNT = Math.min(11, Math.max(2, (navigator.hardwareConcurrency || 4) - 1))
+export const WORKER_COUNT = lire(
+  'workers',
+  Math.min(11, Math.max(2, (navigator.hardwareConcurrency || 4) - 1)),
+  1,
+  32
+)
 
 export class Evolution {
   constructor({ onSnapshot, onGeneration, onNewBest, onAutosave, resumeFrom = null }) {

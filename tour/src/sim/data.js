@@ -243,11 +243,28 @@ export const REINFORCEMENTS = [
 //
 // Durée de vie courte : sans elle, l'objet attend sagement la fin du
 // combat et ne force aucun arbitrage.
+// La fiole de mana a été retirée après mesure. La mana restait déjà au
+// plafond 37 % du temps de combat AVANT les drops ; en ajouter a poussé ce
+// gâchis à 59,5 %. Un objet sur trois remplissait une ressource que
+// personne ne dépensait. L'endurance, elle, est réellement rare depuis
+// qu'elle bride la mobilité — c'est donc elle qui la remplace.
 export const DROPS = {
   vie: { label: 'Fiole de vie', heal: 0.3, color: '#d1584a', life: 14, weight: 5 },
-  mana: { label: 'Fiole de mana', mana: 0.45, color: '#4a7fb5', life: 14, weight: 3 },
+  endurance: { label: 'Fiole de vigueur', stamina: 0.7, color: '#6fb96a', life: 14, weight: 3 },
   essence: { label: 'Essence', applies: { bless: 8, haste: 6 }, color: '#c9a96e', life: 10, weight: 2 },
 }
+
+// Secours CONTRA-CYCLIQUE. Le butin ordinaire tombe quand on tue : il
+// récompense la victoire. Mesuré, il n'a donc rien changé à l'effondrement
+// (5 runs sur 6 voient trois agents tomber en moins de 60 s, contre 5 sur 7
+// avant) — une équipe qui perd tue moins, reçoit moins, et n'a pas le
+// loisir d'aller ramasser pendant qu'elle s'écroule.
+//
+// Pour casser une boucle de rétroaction, il faut un mécanisme qui se
+// déclenche PARCE QUE ça va mal. Un agent qui tombe laisse donc une fiole
+// garantie sur son corps : le filet arrive au moment exact où il sert, et
+// il faut aller le chercher là où ça vient de mal tourner.
+export const DROP_ON_DEATH = { type: 'vie', life: 20 }
 
 export const DROP_CHANCE = 0.16 // par monstre ordinaire
 export const DROP_CHANCE_ELITE = 0.55 // élites et boss

@@ -8,7 +8,7 @@
 // Le moteur n'applique que les règles (data.js) et le terrain (terrain.js).
 
 import {
-  CARDS_PER_LEVEL, CLASSES, DROPS, DROP_CHANCE, DROP_CHANCE_ELITE,
+  CARDS_PER_LEVEL, CLASSES, DROPS, DROP_CHANCE, DROP_CHANCE_ELITE, DROP_ON_DEATH,
   DROP_PICKUP_RADIUS, ELITE_CHANCE, ELITE_FROM_FLOOR, ELITE_MULT,
   FLOOR_BUDGET, FLOOR_TIME_LIMIT, HEAVY_HIT_THRESHOLD, INTERACTIONS, MAX_FLOOR,
   MONSTERS, MONSTER_POWER, PASSIVES, REGEN_BETWEEN_FLOORS, REINFORCEMENTS,
@@ -629,6 +629,17 @@ export class TowerRun {
     hero.stats.deathFloor = this.floor
     // Le cadavre d'un agent n'est pas exploitable par le Nécromancien.
     this.emit({ t: 'heroDown', slot: hero.slot, at: [hero.x, hero.z] })
+    // Secours contra-cyclique : une fiole garantie là où il est tombé. Elle
+    // dure plus longtemps qu'un butin ordinaire, parce que le moment où
+    // elle apparaît est justement celui où personne n'est libre.
+    {
+      const spec = DROPS[DROP_ON_DEATH.type]
+      this.drops.push({
+        id: this.nextId++, x: hero.x, z: hero.z,
+        type: DROP_ON_DEATH.type, spec, life: DROP_ON_DEATH.life,
+      })
+      this.emit({ t: 'drop', at: [hero.x, hero.z], type: DROP_ON_DEATH.type, color: spec.color })
+    }
     if (this.currentFloorLog) {
       this.currentFloorLog.deaths.push({ agent: hero.cls.label, slot: hero.slot, cause })
     }
@@ -802,7 +813,7 @@ export class TowerRun {
         obs[k++] = (best.z - hero.z) / BOARD
         obs[k++] = 1 - Math.min(dist / 20, 1)
         obs[k++] = best.type === 'vie' ? 1 : 0
-        obs[k++] = best.type === 'mana' ? 1 : 0
+        obs[k++] = best.type === 'endurance' ? 1 : 0
         obs[k++] = best.type === 'essence' ? 1 : 0
         obs[k++] = Math.min(best.life / 14, 1) // temps restant avant disparition
       } else {
@@ -1541,7 +1552,7 @@ export class TowerRun {
           pris.hp = Math.min(pris.maxHp, pris.hp + pris.maxHp * s.heal)
           pris.healing += pris.maxHp * s.heal
         }
-        if (s.mana) pris.mana = Math.min(pris.maxMana, pris.mana + pris.maxMana * s.mana)
+        if (s.stamina) pris.stamina = Math.min(STAMINA_MAX, pris.stamina + STAMINA_MAX * s.stamina)
         if (s.applies) this.applyStates(pris, s.applies)
         pris.stats.drops = (pris.stats.drops ?? 0) + 1
         this.mark('drop', { agent: pris.cls.label, slot: pris.slot, objet: s.label })

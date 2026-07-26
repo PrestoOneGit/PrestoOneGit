@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { TICK, TowerRun, mulberry32 } from './sim/engine.js'
 import { describeComposition, randomTeamGenome } from './sim/brain.js'
 import { analyzeRun, compareReports, reportToMarkdown } from './sim/report.js'
-import { AUTOSAVE_EVERY, Evolution, WORKER_COUNT } from './ga/evolution.js'
+import { AUTOSAVE_EVERY, Evolution, POP_SIZE, WORKER_COUNT } from './ga/evolution.js'
 import {
   clearSession, downloadJson, exportSession, importSession, loadSession, saveSession,
 } from './ga/persistence.js'
@@ -247,6 +247,7 @@ async function enregistrerRun() {
 
 hud = new HUD({
   workerCount: WORKER_COUNT,
+  popSize: POP_SIZE,
   onPauseToggle: () => {
     evolution.paused = !evolution.paused
     if (evolution.paused) autosave()

@@ -10,7 +10,7 @@
 
 import { TICK, TowerRun, runTower, mulberry32 } from '../src/sim/engine.js'
 import { randomTeamGenome, crossoverTeams, mutateTeam, describeComposition } from '../src/sim/brain.js'
-import { MOBILITY } from '../src/sim/engine.js'
+import { STAMINA_COST } from '../src/sim/data.js'
 
 const POP = 32
 const GENS = Number(process.argv[2] ?? 20)
@@ -43,7 +43,7 @@ console.log(`Champion : ${describeComposition(best.g)} — fitness ${Math.round(
 const agg = {
   spread: 0, spreadN: 0,
   deathGaps: [], wipes: 0, runs: 0,
-  dashHostile: 0, dashIdle: 0,
+  dashTotal: 0, dashDanger: 0, dashProche: 0, dashBride: 0,
   manaFull: 0, manaTicks: 0,
   restHp: [],
   idleTicks: 0, actTicks: 0,
@@ -88,11 +88,26 @@ for (const seed of HELDOUT) {
         if (!seen.has(i)) { seen.add(i); deaths.push({ t: run.time, slot: i, floor: run.floor }) }
         continue
       }
-      // Un dash déclenché sans aucun monstre à portée utile est-il fréquent ?
+      // Le dash. La première version de cette mesure suivait une PART —
+      // « quel pourcentage des dash part sans ennemi à moins de 12 unités ».
+      // C'était trompeur : brider la mobilité réduit le nombre total de
+      // dash sans changer leur composition, et comme les agents voyagent
+      // alors plus lentement ils passent plus de temps hors combat, ce qui
+      // fait MONTER la part hors combat. On compte donc en absolu, et on
+      // regarde le vrai danger : un monstre à portée de coup.
       if (h.mobilityCds.dash > prevCd[i]) {
-        const near = run.monsters.some((m) => Math.hypot(m.x - h.x, m.z - h.z) < 12)
-        near ? agg.dashHostile++ : agg.dashIdle++
+        agg.dashTotal++
+        let dmin = Infinity
+        for (const m of run.monsters) {
+          const d = Math.hypot(m.x - h.x, m.z - h.z)
+          if (d < dmin) dmin = d
+        }
+        if (dmin < 4) agg.dashProche++
+        else if (dmin < 12) agg.dashDanger++
       }
+      // Le réseau voulait-il dasher sans en avoir les moyens ? C'est la
+      // preuve que l'endurance contraint réellement.
+      if (h.mobilityCds.dash <= 0 && h.stamina < STAMINA_COST.dash) agg.dashBride++
       // Mana au plafond pendant un combat = ressource inutilisée.
       agg.manaTicks++
       if (h.mana >= h.maxMana * 0.98 && run.monsters.length > 0) agg.manaFull++
@@ -136,8 +151,10 @@ if (agg.deathGaps.length) {
 }
 
 console.log('\nMOBILITÉ')
-console.log(`  dash avec un monstre à moins de 12 unités : ${pct(agg.dashHostile, agg.dashHostile + agg.dashIdle)}`)
-console.log(`  dash déclenchés à vide                    : ${pct(agg.dashIdle, agg.dashHostile + agg.dashIdle)}`)
+console.log(`  dash par run                    : ${(agg.dashTotal / agg.runs).toFixed(0)}`)
+console.log(`  dont au contact (< 4 unités)    : ${(agg.dashProche / agg.runs).toFixed(0)} par run  (${pct(agg.dashProche, agg.dashTotal)})`)
+console.log(`  dont à moyenne portée (< 12)    : ${(agg.dashDanger / agg.runs).toFixed(0)} par run  (${pct(agg.dashDanger, agg.dashTotal)})`)
+console.log(`  ticks-agent dash prêt mais endurance insuffisante : ${(agg.dashBride / agg.runs).toFixed(0)} par run`)
 
 console.log('\nRESSOURCES')
 console.log(`  mana au plafond pendant un combat : ${pct(agg.manaFull, agg.manaTicks)} du temps`)

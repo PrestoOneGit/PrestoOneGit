@@ -97,6 +97,9 @@ la version qui l'a produite.
 Si l'ancienne session traîne encore dans le navigateur : **Session →
 Effacer**.
 
+Pour un entraînement long, voir [`ENTRAINEMENT.md`](ENTRAINEMENT.md) :
+population, workers, veille, et ce qu'il faut s'attendre à observer.
+
 ## Vérifier que l'apprentissage est réel
 
 Ces scripts ne demandent **aucune dépendance** — Node seul suffit, ils

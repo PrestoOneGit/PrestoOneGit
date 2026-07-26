@@ -11,7 +11,7 @@ import { CLASSES } from '../sim/data.js'
 
 export class HUD {
   constructor({
-    workerCount, onPauseToggle, onReset, onReplaySpeed, onSelectRecord,
+    workerCount, popSize = 32, onPauseToggle, onReset, onReplaySpeed, onSelectRecord,
     onQualityToggle, onPickGeneration, onReport, onRecord, onSessionAction,
   }) {
     this.ui = document.getElementById('ui')
@@ -33,7 +33,7 @@ export class HUD {
     this.squadFor = null
 
     document.getElementById('workers-hint').textContent =
-      `${workerCount} ascensions simulées en parallèle, une par cœur`
+      `${workerCount} ascensions en parallèle · population ${popSize} par génération`
 
     // --- Vitesse de rejeu ---
     this.speedButtons = [...document.querySelectorAll('[data-rspeed]')]
