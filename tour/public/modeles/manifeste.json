@@ -1,0 +1,5 @@
+{
+  "_lisezmoi": "Liste des modèles .glb réellement présents. Ajoute l'identifiant ici APRÈS avoir déposé le fichier — tout ce qui n'est pas listé garde le pion procédural. Les identifiants doivent correspondre à ceux de src/sim/data.js.",
+  "heros": [],
+  "monstres": []
+}

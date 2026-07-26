@@ -9,6 +9,7 @@ import {
 } from './ga/persistence.js'
 import { QUALITY_LEVELS, Tower3D } from './view/tower3d.js'
 import { Enregistreur, enregistrementDisponible, telechargerVideo } from './view/enregistreur.js'
+import { chargerModeles, nombreDeModeles } from './view/modeles.js'
 import { HUD } from './ui/hud.js'
 
 // ---- Scène ----
@@ -90,6 +91,12 @@ function startReplay(entry) {
   hud?.buildTeamPanel(replayRun)
   hud?.renderRecords(evolution?.records ?? [], entry.generation)
 }
+
+// Les modèles .glb éventuellement déposés dans public/modeles/ sont
+// chargés avant le premier rejeu. Aucun modèle = aucun problème : les
+// pions procéduraux restent la solution par défaut.
+await chargerModeles()
+if (nombreDeModeles() > 0) console.info(`[modeles] ${nombreDeModeles()} modèle(s) chargé(s)`)
 
 startReplay(bootstrap)
 

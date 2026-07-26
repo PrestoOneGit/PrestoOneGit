@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { BOARD, HALF } from '../sim/terrain.js'
 import { CLASSES, tierForFloor } from '../sim/data.js'
+import { HAUTEUR_HEROS, hauteurMonstre, instancier } from './modeles.js'
 
 // Niveaux de qualité — purement visuels. Le rendu se fait sur le fil
 // principal + GPU, l'évolution dans les Web Workers : changer de qualité
@@ -373,9 +374,65 @@ export class Tower3D {
     return { pivot, arm, shield, spec: w }
   }
 
+  // Un modèle externe reçoit le même équipement qu'un pion : jauges, arme,
+  // et les crochets d'animation. Seul le corps diffère, donc tout le reste
+  // du fichier continue de fonctionner sans savoir d'où vient le maillage.
+  habillerHeros(hero, corps, color) {
+    const q = this.quality
+    const g = new THREE.Group()
+    g.add(corps)
+
+    // On récupère un matériau du modèle pour que les effets d'état
+    // (gelé, en feu) aient quelque chose à teinter.
+    let mat = null
+    corps.traverse((o) => { if (!mat && o.isMesh) mat = Array.isArray(o.material) ? o.material[0] : o.material })
+
+    let weapon = null
+    if (q.lathe) {
+      weapon = this.makeWeapon(hero.cls.id)
+      if (weapon) {
+        g.add(weapon.pivot)
+        if (weapon.shield) g.add(weapon.shield)
+      }
+    }
+    const hpBar = this.makeBar(0.9, 1.85, '#57c46a')
+    const manaBar = this.makeBar(0.9, 1.69, '#4a7fb5')
+    g.add(hpBar, manaBar)
+    g.userData = {
+      hpBar, manaBar, mat, body: corps, emblem: null, weapon,
+      baseColor: mat?.emissive?.clone() ?? new THREE.Color(color),
+      lunge: 0, lungeDir: [0, 0], flash: 0, swing: 0, externe: true,
+    }
+    return g
+  }
+
+  // Idem pour un monstre. La couleur d'origine du modèle est CONSERVÉE :
+  // le codage vert/or/rouge (ordinaire, élite, boss) est abandonné dès
+  // qu'un modèle est fourni — un anneau au sol serait plus propre qu'un
+  // filtre de couleur par-dessus le design.
+  habillerMonstre(m, corps) {
+    const g = new THREE.Group()
+    g.add(corps)
+    let mat = null
+    corps.traverse((o) => { if (!mat && o.isMesh) mat = Array.isArray(o.material) ? o.material[0] : o.material })
+    const hpBar = this.makeBar(0.7 + m.size * 0.5, m.size * 1.2 + 0.5, '#cf5f55')
+    g.add(hpBar)
+    g.userData = {
+      hpBar, mat, body: corps,
+      baseColor: mat?.emissive?.clone() ?? new THREE.Color('#000000'),
+      bodyScale: 1, lunge: 0, lungeDir: [0, 0], flash: 0, externe: true,
+    }
+    return g
+  }
+
   makeHeroMesh(hero) {
     const color = new THREE.Color(hero.cls.color)
     const q = this.quality
+    // Un modèle .glb déposé dans public/modeles/heros/ remplace le pion
+    // tourné. L'arme, les jauges et les animations restent identiques :
+    // seul le corps change.
+    const externe = q.lathe ? instancier('heros', hero.cls.id, HAUTEUR_HEROS) : null
+    if (externe) return this.habillerHeros(hero, externe, color)
     const mat = new THREE.MeshStandardMaterial({
       color, flatShading: true, roughness: 0.75, metalness: q.lathe ? 0.15 : 0,
       emissive: color, emissiveIntensity: 0.14,
@@ -432,6 +489,8 @@ export class Tower3D {
 
   makeMonsterMesh(m) {
     const q = this.quality
+    const externe = q.lathe ? instancier('monstres', m.type, hauteurMonstre(m.size)) : null
+    if (externe) return this.habillerMonstre(m, externe)
     const color = m.boss ? '#7a3c3c' : m.elite ? '#8f6e3c' : '#6e8557'
     const mat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.9 })
     const g = new THREE.Group()
